@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.25.3" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
+    <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.4022.49" />
+    <PackageVersion Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+    <PackageVersion Include="Moq" Version="4.20.72" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.9" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+</Project>

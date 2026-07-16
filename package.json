@@ -1,0 +1,16 @@
+{
+  "name": "mahodown",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "web:build": "npm run build --prefix src/editor-web",
+    "web:test": "npm test --prefix src/editor-web",
+    "web:dev": "npm run dev --prefix src/editor-web"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

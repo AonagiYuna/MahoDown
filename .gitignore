@@ -1,0 +1,29 @@
+# --- Build output ---
+# Rust / Tauri (src-tauri/target can reach several GB)
+target/
+# .NET
+bin/
+obj/
+dist/
+src/editor-web/dist/
+# packaged, distributable output
+publish/
+TestResults/
+
+# --- Tauri generated ---
+src-tauri/gen/schemas/
+
+# --- Dependencies & caches ---
+node_modules/
+.npm-cache/
+
+# --- IDE / editor ---
+.vs/
+.vscode/
+.worktrees/
+
+# --- Misc ---
+*.user
+*.suo
+*.rsuser
+*.log

@@ -1,0 +1,40 @@
+[package]
+name = "mahodown"
+version = "0.1.0"
+description = "MahoDown — cross-platform Markdown editor"
+authors = ["MahoDown"]
+edition = "2021"
+
+[lib]
+name = "mahodown_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync"] }
+dirs = "6"
+base64 = "0.22"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "blocking"] }
+thiserror = "2"
+parking_lot = "0.12"
+mime_guess = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

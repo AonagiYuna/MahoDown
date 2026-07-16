@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/capability",
+  "identifier": "default",
+  "description": "Default permissions for MahoDown",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-title",
+    "core:window:allow-set-size",
+    "core:window:allow-set-min-size",
+    "core:window:allow-center",
+    "core:window:allow-inner-size",
+    "core:window:allow-outer-size",
+    "core:window:allow-scale-factor",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:default",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-read-dir",
+    "fs:allow-mkdir",
+    "fs:allow-exists",
+    "fs:allow-copy-file",
+    "fs:allow-remove",
+    "fs:allow-rename",
+    "fs:allow-stat",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" },
+        { "path": "$HOME/**" },
+        { "path": "$TEMP/**" },
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "**" }
+      ]
+    }
+  ]
+}

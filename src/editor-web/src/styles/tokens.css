@@ -1,0 +1,117 @@
+/* Exact tokens from MahoDown design 4b / prototype */
+:root {
+  color-scheme: light dark;
+  --desk: #d9d5cd;
+  --bg: #fbfaf8;
+  --chrome: #f1efeb;
+  --panel: #f7f5f1;
+  --border: rgba(0, 0, 0, 0.08);
+  --hair: rgba(0, 0, 0, 0.05);
+  --hair-strong: rgba(0, 0, 0, 0.06);
+  --text: #1f2023;
+  --text-body: #3a3a37;
+  --text2: #6d6c68;
+  --text-name: #4a4a47;
+  --muted: #a9a7a2;
+  --muted-outline: #aca9a2;
+  --outline-item: #6d6c68;
+  --outline-dim: #9a9892;
+  --code-bg: #f2f0ec;
+  --acc-a: #5b8fdd;
+  --acc-b: #9d8cf0;
+  --acc-text: #3f77c9;
+  --acc-purple: #6a5fd0;
+  --seg: rgba(0, 0, 0, 0.055);
+  --danger: #c26666;
+  --ok: #3f9e7d;
+  --caption-inset: 140px;
+  --titlebar-h: 38px;
+  --status-h: 27px;
+  --outline-w: 186px;
+  /* Design base 552px; grow with window so maximize/fullscreen uses the space */
+  --prose-w: clamp(480px, 56vw, 920px);
+  --prose-pad-x: clamp(24px, 4vw, 64px);
+  --ui-scale: 1;
+  --font-ui: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-serif: "Noto Serif SC", "Songti SC", serif;
+  --font-mono: "JetBrains Mono", Consolas, monospace;
+  --grad: linear-gradient(135deg, #5b8fdd, #9d8cf0);
+  --grad-soft: linear-gradient(135deg, rgba(91, 143, 221, 0.12), rgba(157, 140, 240, 0.14));
+  --selection: rgba(157, 140, 240, 0.32);
+}
+
+:root[data-theme="dark"] {
+  --desk: #0b0c0f;
+  --bg: #16171b;
+  --chrome: #101114;
+  --panel: #1a1b20;
+  --border: rgba(255, 255, 255, 0.09);
+  --hair: rgba(255, 255, 255, 0.06);
+  --hair-strong: rgba(255, 255, 255, 0.06);
+  --text: #e6e7ea;
+  --text-body: #a3a6ae;
+  --text2: #a3a6ae;
+  --text-name: #c9cad0;
+  --muted: #5c5f66;
+  --muted-outline: #5c5f66;
+  --outline-item: #a3a6ae;
+  --outline-dim: #6d7078;
+  --code-bg: #111216;
+  --acc-text: #9d8cf0;
+  --acc-purple: #b3a4f7;
+  --seg: rgba(255, 255, 255, 0.06);
+  --selection: rgba(157, 140, 240, 0.32);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Wide / maximized: slightly larger chrome & type (still readable, not cartoonish) */
+@media (min-width: 1400px) {
+  :root {
+    --ui-scale: 1.06;
+    --titlebar-h: 40px;
+    --status-h: 28px;
+    --outline-w: 200px;
+    --prose-w: clamp(560px, 50vw, 980px);
+  }
+}
+
+@media (min-width: 1800px) {
+  :root {
+    --ui-scale: 1.1;
+    --titlebar-h: 42px;
+    --status-h: 30px;
+    --outline-w: 220px;
+    --prose-w: clamp(640px, 48vw, 1080px);
+  }
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+::selection {
+  background: var(--selection);
+}
