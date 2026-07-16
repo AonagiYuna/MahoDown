@@ -8,18 +8,19 @@
 
 ## 技术栈（已选定）
 
-### 当前主线：Tauri 2（跨平台）
+### 主线：Tauri 2（跨平台）
 
 | 层 | 选型 | 原因 |
 |---|---|---|
 | 壳 | **Tauri 2 + Rust** | 跨 Win/macOS/Linux；包小；系统 WebView（Win=WebView2，Linux=WebKitGTK，Mac=WKWebView） |
 | 前端 | TypeScript + Vite + Milkdown Crepe + CodeMirror 6 | 复用既有 editor-web |
 | 业务 | Rust（`src-tauri`） | 文件/设置/图床/历史/导出；经 `bridge_dispatch` 兼容原命令名 |
-| 测试 | Vitest（前端）+ 后续 cargo test | |
+| 测试 | Vitest（前端）+ cargo test（后端） | |
 
-### 遗留：WinUI 3 + .NET（`src/MahoDown.*`）
+### 已移除：WinUI 3 + .NET
 
-仍保留作参考与 Windows 专用实现，**新功能优先落在 Tauri**。
+早期的 WinUI 3 / .NET 实现（`src/MahoDown.App`、`src/MahoDown.Core`、`tests/`、`MahoDown.sln`）
+在初始提交后已删除，只保留 Tauri 主线。如需回溯，见首个提交的历史记录。
 
 ## 范围策略
 

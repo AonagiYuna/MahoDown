@@ -1,14 +1,10 @@
 # --- Build output ---
 # Rust / Tauri (src-tauri/target can reach several GB)
 target/
-# .NET
-bin/
-obj/
 dist/
 src/editor-web/dist/
 # packaged, distributable output
 publish/
-TestResults/
 
 # --- Tauri generated ---
 src-tauri/gen/schemas/
@@ -23,7 +19,4 @@ node_modules/
 .worktrees/
 
 # --- Misc ---
-*.user
-*.suo
-*.rsuser
 *.log
