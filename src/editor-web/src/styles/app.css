@@ -981,16 +981,20 @@
   text-align: right !important;
   font-variant-numeric: tabular-nums;
   color: var(--text2) !important;
-  /* Geometric centering leaves markers ~2px high because CJK/Latin glyphs sit
-     below the line-box center. This nudge (a font-metric constant, ~0.148em, so
-     it scales with font size and is independent of line-height) drops the marker
-     onto the text's optical center. */
-  transform: translateY(0.14em) !important;
+  /* Ordered numbers are text: sharing this line box already lands them on the
+     paragraph baseline. Do NOT nudge the label itself — that only applies to the
+     SVG markers below, which have no baseline. */
 }
 
 .milkdown-host .milkdown-list-item-block li .label-wrapper svg {
   width: 1.05em !important;
   height: 1.05em !important;
+  /* Geometric centering leaves SVG markers (bullet/checkbox) ~1px high because
+     CJK glyphs sit just below the line-box center. This nudge (a font-metric
+     constant ~0.074em: (fbAscent-fbDescent)/2 + (inkDescent-inkAscent)/2, so it
+     scales with font size and is independent of line-height) drops the marker
+     onto the CJK optical center. Numbers are unaffected — they contain no <svg>. */
+  transform: translateY(0.075em) !important;
 }
 
 /* first block inside an item must not add top margin, or text drops off the marker line */
