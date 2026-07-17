@@ -975,31 +975,40 @@
   width: auto !important;
   min-width: 1.2em !important;
   padding: 0 !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: flex-end !important;
+  /* Ordered numbers are TEXT. Keep the label a block with this line box so the
+     number sits on its own baseline — which, sharing --md-line with the
+     paragraph, is exactly the paragraph baseline. Flex `align-items:center`
+     would geometric-center the glyph box instead, floating it ~4px high. */
+  display: block !important;
   text-align: right !important;
   font-variant-numeric: tabular-nums;
   color: var(--text2) !important;
-  /* Ordered numbers are text: sharing this line box already lands them on the
-     paragraph baseline. Do NOT nudge the label itself — that only applies to the
-     SVG markers below, which have no baseline. */
+}
+
+/* Bullets / checkboxes are SVG (no baseline), so center them in the line box;
+   the svg rule below then nudges onto the CJK optical center. */
+.milkdown-host .milkdown-list-item-block li .label-wrapper .label:has(svg) {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
 }
 
 .milkdown-host .milkdown-list-item-block li .label-wrapper svg {
   width: 1.05em !important;
   height: 1.05em !important;
-  /* Geometric centering leaves SVG markers (bullet/checkbox) ~1px high because
-     CJK glyphs sit just below the line-box center. This nudge (a font-metric
-     constant ~0.074em: (fbAscent-fbDescent)/2 + (inkDescent-inkAscent)/2, so it
-     scales with font size and is independent of line-height) drops the marker
-     onto the CJK optical center. Numbers are unaffected — they contain no <svg>. */
-  transform: translateY(0.075em) !important;
+  /* Flex-centered in the --md-line label box, which now shares the text's line
+     box (the padding-top fix above), so the marker lands on the text center on
+     its own — no magic nudge needed. */
 }
 
-/* first block inside an item must not add top margin, or text drops off the marker line */
+/* The first block inside an item must not push its text below the marker line.
+   Crepe pads the list paragraph with `padding: 4px 0`, but our --md-line sizing
+   stripped the matching pad off the marker column — so that 4px top padding
+   floated every marker ~4px high. Zero the top margin AND padding so the text's
+   first line shares the marker's line box. */
 .milkdown-host .milkdown-list-item-block li .children > .content-dom > :first-child {
   margin-top: 0 !important;
+  padding-top: 0 !important;
 }
 
 /* checked task box picks up the accent */
