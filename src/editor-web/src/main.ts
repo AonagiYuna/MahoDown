@@ -430,10 +430,15 @@ function trackCursorFromSource(): void {
   updateStatusExtras();
 }
 
+/** A doc counts as saved only once it lives on disk and has no pending edits. */
+function isSavedToDisk(): boolean {
+  return !!state.filePath && !state.isDirty;
+}
+
 function updateSaveChrome(): void {
   const saveState = document.querySelector('[data-save-state]');
   if (saveState) {
-    saveState.textContent = state.isDirty ? '✦ 未保存' : '✦ 已保存';
+    saveState.textContent = isSavedToDisk() ? '✦ 已保存' : '✦ 未保存';
   }
 }
 
@@ -1143,17 +1148,20 @@ function jumpToOutlineLine(line: number): void {
   }
 
   if (state.mode === 'split' || state.mode === 'rich') {
+    // Scope to .ProseMirror (the editable content) — NOT .milkdown-host, whose
+    // block/slash menus also contain <h*> nodes (Text/List/Advanced) that would
+    // offset the index.
     const root =
       state.mode === 'rich'
-        ? document.querySelector('.milkdown-host')
+        ? document.querySelector('.milkdown-host .ProseMirror')
         : document.querySelector('[data-preview]');
-    const headings = root?.querySelectorAll('h1, h2, h3, h4');
-    for (const heading of Array.from(headings ?? [])) {
-      if ((heading.textContent ?? '').trim() === item.text) {
-        heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        break;
-      }
-    }
+    // Match by document ORDER, not text: heading text in the DOM is rendered
+    // (no markdown markup) while item.text is raw, so text matching failed for
+    // any heading with **bold** / `code` / links, or duplicate titles. The Nth
+    // outline entry is the Nth rendered heading (both cover h1–h6 in order).
+    const headings = root?.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    const heading = headings?.[items.indexOf(item)];
+    heading?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   document.querySelectorAll('.outline-item').forEach((el) => {
@@ -2000,7 +2008,7 @@ function renderEditor(): string {
         </button>
         <span class="doc-icon" aria-hidden="true">${bookSvg()}</span>
         <span class="doc-name" data-doc-name>${escapeHtml(fileName())}</span>
-        <span class="save-state" data-save-state>${state.isDirty ? '✦ 未保存' : '✦ 已保存'}</span>
+        <span class="save-state" data-save-state>${isSavedToDisk() ? '✦ 已保存' : '✦ 未保存'}</span>
         <div class="title-drag" data-tauri-drag-region aria-hidden="true"></div>
       </div>
       <div class="title-center">
@@ -2094,10 +2102,12 @@ function bindMenuEvents(): void {
     el.addEventListener('click', (event) => {
       event.stopPropagation();
       const pref = el.dataset.themePref as 'system' | 'light' | 'dark';
-      setThemePreference(pref);
-      // Theme change needs full render for CSS tokens; keep menu closed after pick.
-      state.menuOpen = false;
-      render();
+      setThemePreference(pref); // re-themes instantly via CSS vars — no re-render
+      // Keep the menu open so the user can compare themes; just move the active
+      // pill to the picked option in place.
+      app.querySelectorAll<HTMLElement>('[data-theme-pref]').forEach((b) => {
+        b.classList.toggle('active', b.dataset.themePref === pref);
+      });
     });
   });
   app.querySelectorAll<HTMLElement>('[data-menu]').forEach((el) => {
@@ -2975,17 +2985,22 @@ scheduleAutoSnapshot();
 render();
 
 void (async () => {
+  let openPath: string | undefined;
   try {
-    const ready = await sendBridgeRequest<{ isReady?: boolean; captionInsetPx?: number }>(
-      'app:editorReady',
-      { isReady: true }
-    );
+    const ready = await sendBridgeRequest<{
+      isReady?: boolean;
+      captionInsetPx?: number;
+      openPath?: string | null;
+    }>('app:editorReady', { isReady: true });
     state.isReady = true;
     // Native caption buttons removed (custom chrome). Keep a small reserve only if host reports one.
     if (typeof ready?.captionInsetPx === 'number' && ready.captionInsetPx > 0) {
       state.captionInset = ready.captionInsetPx;
     } else {
       state.captionInset = 0;
+    }
+    if (ready?.openPath) {
+      openPath = ready.openPath;
     }
   } catch {
     state.isReady = true;
@@ -2995,7 +3010,20 @@ void (async () => {
   applyTheme();
   scheduleAutoSnapshot();
   render();
-  showToast('Ctrl+K 命令 · Ctrl+E 专注 · Ctrl+S 保存 · 可粘贴/拖入图片', 3600);
+  // Launched via a file association (right-click → 打开方式): open that file.
+  if (openPath) {
+    await openDocument(openPath).catch(() => undefined);
+  } else {
+    showToast('Ctrl+K 命令 · Ctrl+E 专注 · Ctrl+S 保存 · 可粘贴/拖入图片', 3600);
+  }
+  // Reveal the window only now that content + theme are painted — the config
+  // starts it hidden+centered, so this kills the top-left flash on launch.
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().show();
+  } catch {
+    // browser / no window API
+  }
 })();
 
 // Keep the maximize/restore icon correct even when the window is maximized natively

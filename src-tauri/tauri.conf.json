@@ -21,7 +21,9 @@
         "fullscreen": false,
         "decorations": false,
         "transparent": false,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "center": true,
+        "visible": false
       }
     ],
     "security": {
@@ -31,6 +33,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown",
+        "description": "Markdown document",
+        "role": "Editor"
+      }
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",

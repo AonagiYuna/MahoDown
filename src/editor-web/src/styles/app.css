@@ -1152,9 +1152,9 @@
 }
 
 .welcome-logo {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
   background: var(--grad);
   display: flex;
   align-items: center;
@@ -1164,15 +1164,15 @@
 }
 
 .welcome-logo svg {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
 }
 
 .welcome-title {
-  margin-top: 10px;
+  margin-top: 12px;
   font-family: var(--font-serif);
   font-weight: 700;
-  font-size: 18px;
+  font-size: 26px;
   color: var(--text);
 }
 
@@ -1185,16 +1185,22 @@
 }
 
 .welcome-sub {
-  margin-top: 3px;
-  font-size: 10px;
+  margin-top: 5px;
+  font-size: 13px;
   color: var(--muted);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
 }
 
 .welcome-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.welcome-actions .btn-primary,
+.welcome-actions .btn-secondary {
+  font-size: 14px;
+  padding: 10px 24px;
 }
 
 .btn-primary {
@@ -1239,7 +1245,7 @@
 }
 
 .recent-label {
-  font-size: 10px;
+  font-size: 11.5px;
   letter-spacing: 0.12em;
   color: var(--muted-outline);
   margin-bottom: 10px;
@@ -1250,11 +1256,18 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: none;
   border-radius: 6px;
   background: transparent;
   text-align: left;
+  font-size: 13px;
+}
+
+.recent-item .time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .recent-item:hover {

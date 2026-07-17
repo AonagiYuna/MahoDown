@@ -16,6 +16,9 @@ use crate::settings::{
 pub struct AppState {
     pub current_file: Mutex<Option<String>>,
     pub is_dirty: Mutex<bool>,
+    /// File path passed on the command line (file association / "open with").
+    /// Consumed once by the frontend via app:editorReady.
+    pub launch_file: Mutex<Option<String>>,
 }
 
 impl Default for AppState {
@@ -23,6 +26,7 @@ impl Default for AppState {
         Self {
             current_file: Mutex::new(None),
             is_dirty: Mutex::new(false),
+            launch_file: Mutex::new(None),
         }
     }
 }
@@ -48,7 +52,10 @@ fn dispatch_sync(
     payload: Value,
 ) -> Result<Value, String> {
     match command {
-        "app:editorReady" => Ok(json!({ "isReady": true, "captionInsetPx": 0 })),
+        "app:editorReady" => {
+            let open = state.launch_file.lock().unwrap().take();
+            Ok(json!({ "isReady": true, "captionInsetPx": 0, "openPath": open }))
+        }
         "app:setDirtyState" => {
             let dirty = payload
                 .get("isDirty")
