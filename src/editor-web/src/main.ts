@@ -190,19 +190,47 @@ function bookSvg(): string {
 }
 
 /** Custom window chrome (Tauri decorations:false). */
+const MAXIMIZE_ICON =
+  '<svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
+// "Restore down": a front square with an L-shaped square peeking behind it (Windows convention).
+const RESTORE_ICON =
+  '<svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.3" y="3.2" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 3.2V1.5h5v5H6.8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
+
+// Tracks the real window state so the maximize button shows the correct icon
+// across re-renders (windowControlsHtml is rebuilt on every render()).
+let windowMaximized = false;
+
 function windowControlsHtml(): string {
+  const maxTitle = windowMaximized ? '向下还原' : '最大化';
   return `
     <div class="win-controls" role="group" aria-label="窗口">
       <button type="button" class="win-btn" data-win="minimize" title="最小化" aria-label="最小化">
         <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" stroke-width="1.2"/></svg>
       </button>
-      <button type="button" class="win-btn" data-win="maximize" title="最大化" aria-label="最大化">
-        <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+      <button type="button" class="win-btn" data-win="maximize" title="${maxTitle}" aria-label="${maxTitle}">
+        ${windowMaximized ? RESTORE_ICON : MAXIMIZE_ICON}
       </button>
       <button type="button" class="win-btn win-close" data-win="close" title="关闭" aria-label="关闭">
         <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2L2 8" stroke="currentColor" stroke-width="1.2"/></svg>
       </button>
     </div>`;
+}
+
+/** Sync the maximize/restore button icon (and tooltip) with the actual window state. */
+async function refreshMaximizeIcon(): Promise<void> {
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    windowMaximized = await getCurrentWindow().isMaximized();
+  } catch {
+    return; // browser / no window API
+  }
+  const icon = windowMaximized ? RESTORE_ICON : MAXIMIZE_ICON;
+  const title = windowMaximized ? '向下还原' : '最大化';
+  document.querySelectorAll<HTMLElement>('[data-win="maximize"]').forEach((btn) => {
+    btn.innerHTML = icon;
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
+  });
 }
 
 async function handleWindowControl(action: string): Promise<void> {
@@ -213,6 +241,7 @@ async function handleWindowControl(action: string): Promise<void> {
       await win.minimize();
     } else if (action === 'maximize') {
       await win.toggleMaximize();
+      await refreshMaximizeIcon();
     } else if (action === 'close') {
       await win.close();
     }
@@ -2701,4 +2730,19 @@ void (async () => {
   scheduleAutoSnapshot();
   render();
   showToast('Ctrl+K 命令 · Ctrl+E 专注 · Ctrl+S 保存 · 可粘贴/拖入图片', 3600);
+})();
+
+// Keep the maximize/restore icon correct even when the window is maximized natively
+// (double-clicking the titlebar, Windows Snap, or the OS shortcuts).
+void (async () => {
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const win = getCurrentWindow();
+    await refreshMaximizeIcon();
+    await win.onResized(() => {
+      void refreshMaximizeIcon();
+    });
+  } catch {
+    // browser / no window API
+  }
 })();
