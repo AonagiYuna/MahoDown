@@ -95,6 +95,24 @@ fn dispatch_sync(
             let content = ai::complete(action, text, context)?;
             Ok(json!({ "content": content, "action": action }))
         }
+        "ai:chat" => {
+            let messages: Vec<(String, String)> = payload
+                .get("messages")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| {
+                            let role = m.get("role").and_then(|r| r.as_str())?.to_string();
+                            let content = m.get("content").and_then(|c| c.as_str())?.to_string();
+                            Some((role, content))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let document = payload.get("document").and_then(|v| v.as_str()).unwrap_or("");
+            let model = payload.get("model").and_then(|v| v.as_str()).unwrap_or("");
+            ai::chat(&messages, document, model)
+        }
         "ai:presets" => Ok(json!({ "presets": ai::presets() })),
         "app:getRecentFiles" => {
             let s = load_settings();

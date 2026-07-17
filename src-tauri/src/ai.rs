@@ -24,14 +24,6 @@ pub fn complete(action: &str, text: &str, context: &str) -> Result<String, Strin
         .ok_or("请先在设置 → AI 中填写 API Key")?;
 
     let (system, user) = build_messages(action, text, context)?;
-    let url = if base.ends_with("/chat/completions") {
-        base
-    } else if base.ends_with("/v1") {
-        format!("{base}/chat/completions")
-    } else {
-        format!("{base}/v1/chat/completions")
-    };
-
     let body = json!({
         "model": model,
         "messages": [
@@ -42,16 +34,102 @@ pub fn complete(action: &str, text: &str, context: &str) -> Result<String, Strin
         "stream": false
     });
 
+    let content = post_completion(&base, &key, &body)?;
+    // Strip common markdown fences if model wraps entire answer
+    Ok(strip_outer_fence(&content))
+}
+
+const DOC_START: &str = "<<<MAHODOWN_DOC>>>";
+const DOC_END: &str = "<<<END>>>";
+
+/// Multi-turn chat that can also edit the whole document. `messages` is the
+/// panel's history (user/assistant). Returns `{ reply, document|null }`.
+pub fn chat(messages: &[(String, String)], document: &str, model_override: &str) -> Result<Value, String> {
+    let settings = load_settings();
+    let base = settings.ai_base_url.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Err("请先在设置 → AI 中配置 API Base URL".into());
+    }
+    let model = {
+        let m = model_override.trim();
+        if !m.is_empty() {
+            m.to_string()
+        } else if settings.ai_model.trim().is_empty() {
+            "deepseek-chat".to_string()
+        } else {
+            settings.ai_model.trim().to_string()
+        }
+    };
+    let key = get_secret("ai", "token")
+        .filter(|s| !s.is_empty())
+        .ok_or("请先在设置 → AI 中填写 API Key")?;
+
+    let system = format!(
+        "你是 MahoDown 的写作助手，嵌入在一个 Markdown 编辑器里。\n\
+         - 正常问答时用简洁中文回复。\n\
+         - 当用户希望你修改文档（润色、改写、增删、翻译、调整结构等）时：先用一两句话说明你改了什么，\
+         然后输出【完整】的修改后 Markdown 文档，并严格用下面两行标记包裹（每个标记独占一行）：\n\
+         {DOC_START}\n（这里放完整文档内容）\n{DOC_END}\n\
+         只有确实修改文档时才输出这个块；纯问答不要输出。必须输出整篇文档（含未改动部分），不要用省略号省略。"
+    );
+    let doc_msg = format!("这是当前文档，全文如下：\n{DOC_START}\n{document}\n{DOC_END}");
+
+    let mut msgs = vec![
+        json!({ "role": "system", "content": system }),
+        json!({ "role": "system", "content": doc_msg }),
+    ];
+    for (role, content) in messages {
+        let r = if role == "assistant" { "assistant" } else { "user" };
+        msgs.push(json!({ "role": r, "content": content }));
+    }
+
+    let body = json!({ "model": model, "messages": msgs, "temperature": 0.5, "stream": false });
+    let content = post_completion(&base, &key, &body)?;
+    let (reply, doc) = split_doc(&content);
+    Ok(json!({ "reply": reply, "document": doc }))
+}
+
+/// Split an assistant reply into chat text + optional full-document block.
+fn split_doc(content: &str) -> (String, Option<String>) {
+    if let Some(start) = content.find(DOC_START) {
+        let before = content[..start].trim().to_string();
+        let after = &content[start + DOC_START.len()..];
+        let doc = match after.find(DOC_END) {
+            Some(end) => &after[..end],
+            None => after, // start marker but truncated / no end marker
+        };
+        let doc = doc.trim_matches(|c: char| c == '\n' || c == '\r').to_string();
+        let reply = if before.is_empty() {
+            "已更新文档，请在下方查看改动。".to_string()
+        } else {
+            before
+        };
+        return (reply, Some(doc));
+    }
+    (content.trim().to_string(), None)
+}
+
+fn chat_url(base: &str) -> String {
+    if base.ends_with("/chat/completions") {
+        base.to_string()
+    } else if base.ends_with("/v1") {
+        format!("{base}/chat/completions")
+    } else {
+        format!("{base}/v1/chat/completions")
+    }
+}
+
+/// Shared OpenAI-compatible POST → assistant message content.
+fn post_completion(base: &str, key: &str, body: &Value) -> Result<String, String> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
+        .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| e.to_string())?;
-
     let resp = client
-        .post(&url)
+        .post(chat_url(base))
         .header("Authorization", format!("Bearer {key}"))
         .header("Content-Type", "application/json")
-        .json(&body)
+        .json(body)
         .send()
         .map_err(|e| format!("AI 请求失败: {e}"))?;
 
@@ -68,17 +146,13 @@ pub fn complete(action: &str, text: &str, context: &str) -> Result<String, Strin
             .unwrap_or_else(|| raw.chars().take(200).collect());
         return Err(format!("AI 返回 {status}: {hint}"));
     }
-
     let parsed: Value = serde_json::from_str(&raw).map_err(|e| format!("解析 AI 响应失败: {e}"))?;
-    let content = parsed
+    parsed
         .pointer("/choices/0/message/content")
         .and_then(|c| c.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .ok_or("AI 未返回有效内容")?;
-
-    // Strip common markdown fences if model wraps entire answer
-    Ok(strip_outer_fence(&content))
+        .ok_or_else(|| "AI 未返回有效内容".to_string())
 }
 
 fn build_messages(action: &str, text: &str, context: &str) -> Result<(String, String), String> {

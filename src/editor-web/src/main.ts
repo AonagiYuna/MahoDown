@@ -87,6 +87,12 @@ type AppState = {
   aiApiKey: string;
   hasAiKey: boolean;
   aiBusy: boolean;
+  aiPanelOpen: boolean;
+  aiChat: { role: 'user' | 'assistant'; content: string }[];
+  aiChatBusy: boolean;
+  aiChatModel: string;
+  aiPendingDoc: string | null;
+  aiChatInput: string;
 };
 
 const DEFAULT_MARKDOWN = `# MahoDown
@@ -153,7 +159,13 @@ const state: AppState = {
   aiModel: 'deepseek-chat',
   aiApiKey: '',
   hasAiKey: false,
-  aiBusy: false
+  aiBusy: false,
+  aiPanelOpen: false,
+  aiChat: [],
+  aiChatBusy: false,
+  aiChatModel: '',
+  aiPendingDoc: null,
+  aiChatInput: ''
 };
 
 const appRoot = document.querySelector<HTMLElement>('#app');
@@ -713,6 +725,238 @@ async function runAiAction(action: 'polish' | 'continue' | 'translate'): Promise
   } finally {
     state.aiBusy = false;
   }
+}
+
+// ---- AI chat side panel: talk to the model, review its edits, accept/reject ----
+
+function currentChatModel(): string {
+  return (state.aiChatModel || state.aiModel || 'deepseek-chat').trim();
+}
+
+function openAiPanel(): void {
+  if (state.view !== 'editor') {
+    showToast('请先打开文档');
+    return;
+  }
+  state.aiPanelOpen = true;
+  if (!state.aiChatModel) state.aiChatModel = state.aiModel;
+  render();
+  setTimeout(() => app.querySelector<HTMLTextAreaElement>('[data-ai-input]')?.focus(), 30);
+}
+
+function toggleAiPanel(): void {
+  if (state.aiPanelOpen) {
+    state.aiPanelOpen = false;
+    render();
+  } else {
+    openAiPanel();
+  }
+}
+
+function scrollAiToBottom(): void {
+  setTimeout(() => {
+    const el = app.querySelector('[data-ai-scroll]');
+    if (el) el.scrollTop = el.scrollHeight;
+  }, 20);
+}
+
+/** Minimal line-level LCS diff for the change-review pane. */
+function computeLineDiff(
+  oldText: string,
+  newText: string
+): { type: 'same' | 'add' | 'del'; text: string }[] {
+  const a = oldText.replace(/\r\n/g, '\n').split('\n');
+  const b = newText.replace(/\r\n/g, '\n').split('\n');
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const rows: { type: 'same' | 'add' | 'del'; text: string }[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      rows.push({ type: 'same', text: a[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      rows.push({ type: 'del', text: a[i] });
+      i++;
+    } else {
+      rows.push({ type: 'add', text: b[j] });
+      j++;
+    }
+  }
+  while (i < n) rows.push({ type: 'del', text: a[i++] });
+  while (j < m) rows.push({ type: 'add', text: b[j++] });
+  return rows;
+}
+
+function diffRowHtml(r: { type: string; text: string }): string {
+  const sign = r.type === 'add' ? '+' : r.type === 'del' ? '−' : ' ';
+  return `<div class="ai-diff-row ${r.type}"><span class="ai-diff-sign">${sign}</span><span class="ai-diff-text">${escapeHtml(r.text) || '&nbsp;'}</span></div>`;
+}
+
+function renderDiffHtml(oldText: string, newText: string): string {
+  const rows = computeLineDiff(oldText, newText);
+  const adds = rows.filter((r) => r.type === 'add').length;
+  const dels = rows.filter((r) => r.type === 'del').length;
+  const parts: string[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    if (rows[i].type === 'same') {
+      let j = i;
+      while (j < rows.length && rows[j].type === 'same') j++;
+      const run = rows.slice(i, j);
+      if (run.length > 4) {
+        parts.push(diffRowHtml(run[0]));
+        parts.push(`<div class="ai-diff-fold">⋯ ${run.length - 2} 行未改动 ⋯</div>`);
+        parts.push(diffRowHtml(run[run.length - 1]));
+      } else {
+        run.forEach((r) => parts.push(diffRowHtml(r)));
+      }
+      i = j;
+    } else {
+      parts.push(diffRowHtml(rows[i]));
+      i++;
+    }
+  }
+  return `<div class="ai-diff-head">改动 <b class="add">+${adds}</b> <b class="del">−${dels}</b> 行</div><div class="ai-diff-body">${parts.join('')}</div>`;
+}
+
+function renderAiPanel(): string {
+  const msgs = state.aiChat
+    .map(
+      (msg) =>
+        `<div class="ai-msg ${msg.role}">${escapeHtml(msg.content).replace(/\n/g, '<br>')}</div>`
+    )
+    .join('');
+  const busy = state.aiChatBusy ? `<div class="ai-msg assistant ai-typing">AI 思考中…</div>` : '';
+  const pending =
+    state.aiPendingDoc != null
+      ? `<div class="ai-review">
+           ${renderDiffHtml(getCurrentMarkdown(), state.aiPendingDoc)}
+           <div class="ai-review-actions">
+             <button type="button" class="btn-primary" data-ai-accept>接受改动</button>
+             <button type="button" class="btn-secondary" data-ai-reject>放弃</button>
+           </div>
+         </div>`
+      : '';
+  const empty =
+    state.aiChat.length === 0 && !state.aiChatBusy
+      ? `<div class="ai-empty">和 AI 聊聊这篇文档，让它帮你改：<br>“把第二段润色一下”、“给全文加个结尾总结”、“标题换个更抓人的”。<br><br>它改动的地方会在下面用<span class="add">绿</span>/<span class="del">红</span>对比标出来，你确认后才会应用。</div>`
+      : '';
+  return `
+  <aside class="ai-panel" aria-label="AI 助手">
+    <div class="ai-panel-head">
+      <span class="ai-panel-title">✦ AI 助手</span>
+      <input class="ai-model" data-ai-model list="ai-model-list" value="${escapeHtml(currentChatModel())}" title="使用的模型（沿用设置里的服务商与 Key）" spellcheck="false" />
+      <datalist id="ai-model-list">
+        <option value="deepseek-chat"></option>
+        <option value="deepseek-reasoner"></option>
+        <option value="gpt-4o"></option>
+        <option value="gpt-4o-mini"></option>
+        <option value="moonshot-v1-8k"></option>
+        <option value="qwen2.5"></option>
+      </datalist>
+      <button type="button" class="ai-panel-close" data-ai-close title="关闭">×</button>
+    </div>
+    <div class="ai-panel-body" data-ai-scroll>
+      ${empty}${msgs}${busy}${pending}
+    </div>
+    <div class="ai-panel-input">
+      <textarea data-ai-input rows="2" placeholder="让 AI 帮你改文档 · Enter 发送 / Shift+Enter 换行">${escapeHtml(state.aiChatInput)}</textarea>
+      <button type="button" class="btn-primary ai-send" data-ai-send ${state.aiChatBusy ? 'disabled' : ''}>发送</button>
+    </div>
+  </aside>`;
+}
+
+async function sendAiChat(): Promise<void> {
+  const text = state.aiChatInput.trim();
+  if (!text || state.aiChatBusy) return;
+  if (!state.hasAiKey && !state.aiApiKey) {
+    state.settingsOpen = true;
+    state.settingsTab = 'ai';
+    render();
+    showToast('请先在设置 → AI 配置 API Key');
+    return;
+  }
+  state.aiChat.push({ role: 'user', content: text });
+  state.aiChatInput = '';
+  state.aiChatBusy = true;
+  render();
+  scrollAiToBottom();
+  try {
+    if (state.aiApiKey && state.aiApiKey !== '********') await persistSettings();
+    const res = await sendBridgeRequest<{ reply: string; document: string | null }>('ai:chat', {
+      messages: state.aiChat.map((m) => ({ role: m.role, content: m.content })),
+      document: getCurrentMarkdown(),
+      model: currentChatModel()
+    });
+    const reply = (res.reply ?? '').trim() || '（已处理）';
+    state.aiChat.push({ role: 'assistant', content: reply });
+    const doc = res.document;
+    if (doc != null && normalizeMarkdown(doc) !== normalizeMarkdown(getCurrentMarkdown())) {
+      state.aiPendingDoc = normalizeMarkdown(doc);
+    }
+  } catch (error) {
+    state.aiChat.push({
+      role: 'assistant',
+      content: '⚠ ' + (error instanceof Error ? error.message : 'AI 请求失败')
+    });
+  } finally {
+    state.aiChatBusy = false;
+    render();
+    scrollAiToBottom();
+  }
+}
+
+async function acceptAiEdit(): Promise<void> {
+  if (state.aiPendingDoc == null) return;
+  const doc = state.aiPendingDoc;
+  state.aiPendingDoc = null;
+  await applyContentReplace(doc);
+  showToast('✦ 已应用 AI 改动');
+  render();
+  scrollAiToBottom();
+}
+
+function rejectAiEdit(): void {
+  state.aiPendingDoc = null;
+  render();
+  scrollAiToBottom();
+}
+
+function bindAiPanel(): void {
+  if (!state.aiPanelOpen) return;
+  const input = app.querySelector<HTMLTextAreaElement>('[data-ai-input]');
+  if (input) {
+    input.addEventListener('input', () => {
+      state.aiChatInput = input.value;
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        state.aiChatInput = input.value;
+        void sendAiChat();
+      }
+    });
+  }
+  app.querySelector('[data-ai-send]')?.addEventListener('click', () => void sendAiChat());
+  app.querySelector('[data-ai-close]')?.addEventListener('click', () => {
+    state.aiPanelOpen = false;
+    render();
+  });
+  app.querySelector('[data-ai-accept]')?.addEventListener('click', () => void acceptAiEdit());
+  app.querySelector('[data-ai-reject]')?.addEventListener('click', () => rejectAiEdit());
+  const model = app.querySelector<HTMLInputElement>('[data-ai-model]');
+  model?.addEventListener('change', () => {
+    state.aiChatModel = model.value.trim();
+  });
 }
 
 async function persistSecret(hostId: string, key: string, value: string): Promise<void> {
@@ -1775,6 +2019,7 @@ function renderEditor(): string {
         </button>
       </div>
       <div class="title-right">
+        <button type="button" class="ai-toggle ${state.aiPanelOpen ? 'on' : ''}" data-action="toggle-ai" title="AI 助手 · 与文档对话">✦ AI</button>
         <div class="title-drag" data-tauri-drag-region aria-hidden="true"></div>
         <div class="title-actions">${windowControlsHtml()}</div>
       </div>
@@ -1786,6 +2031,7 @@ function renderEditor(): string {
           : `<aside class="outline"><div class="outline-label">大纲</div><div data-outline>${outline || '<div class="outline-empty">暂无标题</div>'}</div></aside>`
       }
       <div class="editor-pane"><div class="editor-stage">${center}</div></div>
+      ${state.aiPanelOpen ? renderAiPanel() : ''}
       ${
         state.focus
           ? `<div class="focus-pill"><strong>专注</strong><span data-status-words>${words.toLocaleString()} 字</span><span style="font-family:var(--font-mono)">Ctrl+E 退出</span></div>`
@@ -1921,6 +2167,10 @@ function runMenuCommand(cmd: string | undefined): void {
     void runAiAction('translate');
     return;
   }
+  if (cmd === 'ai-chat') {
+    openAiPanel();
+    return;
+  }
   if (cmd === 'export') {
     state.settingsOpen = true;
     state.settingsTab = 'export';
@@ -1991,10 +2241,15 @@ function renderAppMenu(): string {
     <button type="button" class="menu-item" data-menu="save">保存 / 另存为<span class="kbd">Ctrl+S</span></button>
     <div class="menu-section-label" style="margin-top:4px">导出 / 打印</div>
     <button type="button" class="menu-item" data-menu="print">打印…<span class="kbd">Ctrl+P</span></button>
-    <button type="button" class="menu-item" data-menu="export-html">导出 HTML</button>
-    <button type="button" class="menu-item" data-menu="export-pdf">导出 PDF…</button>
-    <button type="button" class="menu-item" data-menu="export-word">导出 Word</button>
-    <button type="button" class="menu-item" data-menu="export-png">导出 PNG…</button>
+    <div class="menu-item menu-parent" tabindex="0" role="menuitem" aria-haspopup="true">
+      <span>导出</span><span class="chev">›</span>
+      <div class="menu-sub" role="menu" aria-label="导出格式">
+        <button type="button" class="menu-item" data-menu="export-html">HTML<span class="kbd">网页</span></button>
+        <button type="button" class="menu-item" data-menu="export-pdf">PDF<span class="kbd">打印页</span></button>
+        <button type="button" class="menu-item" data-menu="export-word">Word<span class="kbd">.docx</span></button>
+        <button type="button" class="menu-item" data-menu="export-png">PNG<span class="kbd">图片</span></button>
+      </div>
+    </div>
 
     <div class="menu-section-label menu-section-divider">视图</div>
     <div class="menu-item menu-item-static">主题
@@ -2010,9 +2265,15 @@ function renderAppMenu(): string {
     <div class="menu-section-label menu-section-divider">工具</div>
     <button type="button" class="menu-item" data-menu="upload-all">上传全部本地图片到图床</button>
     <button type="button" class="menu-item" data-menu="search">查找…<span class="kbd">Ctrl+Shift+F</span></button>
-    <button type="button" class="menu-item" data-menu="ai-polish">✦ 润色选中<span class="kbd">AI</span></button>
-    <button type="button" class="menu-item" data-menu="ai-continue">续写下一段<span class="kbd">AI</span></button>
-    <button type="button" class="menu-item" data-menu="ai-translate">翻译选中<span class="kbd">AI</span></button>
+    <div class="menu-item menu-parent" tabindex="0" role="menuitem" aria-haspopup="true">
+      <span>✦ AI 处理</span><span class="chev">›</span>
+      <div class="menu-sub" role="menu" aria-label="AI 处理">
+        <button type="button" class="menu-item" data-menu="ai-chat">✦ AI 对话…<span class="kbd">侧栏</span></button>
+        <button type="button" class="menu-item" data-menu="ai-polish">润色选中</button>
+        <button type="button" class="menu-item" data-menu="ai-continue">续写下一段</button>
+        <button type="button" class="menu-item" data-menu="ai-translate">翻译选中</button>
+      </div>
+    </div>
     <button type="button" class="menu-item" data-menu="history">版本历史<span class="kbd">Ctrl+H</span></button>
     <button type="button" class="menu-item" data-menu="plugins">插件…</button>
     <button type="button" class="menu-item" data-menu="settings">设置…<span class="kbd">Ctrl+,</span></button>
@@ -2099,6 +2360,9 @@ function bindEvents(): void {
         state.focus = !state.focus;
         state.menuOpen = false;
         render();
+      }
+      if (action === 'toggle-ai') {
+        toggleAiPanel();
       }
       if (action === 'toggle-theme') {
         setThemePreference(state.theme === 'dark' ? 'light' : 'dark');
@@ -2523,6 +2787,7 @@ function render(): void {
   bindEvents();
   bindRichEditor();
   bindSourceEditor();
+  bindAiPanel();
   void applyWindowLayoutForView(state.view);
 }
 
