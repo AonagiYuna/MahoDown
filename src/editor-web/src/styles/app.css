@@ -946,6 +946,79 @@
   pointer-events: auto !important;
 }
 
+/* ========== Crepe custom widgets — align markers & code blocks ========== */
+/* Crepe renders lists / tasks / code as custom widget DOM (not raw <li>/<pre>),
+   so the tag-based overrides above never reach them and they fall back to Crepe's
+   fixed 32px geometry — which desyncs from our type scale (floating bullets, a
+   detached number column, plain code blocks). These rules make the marker column
+   exactly one text line tall so the marker centers on the first line, tighten the
+   gap, scale icons with the text, and give code blocks the rounded card look. */
+.milkdown-host {
+  /* same line box as .ProseMirror p, so markers sit on the text baseline */
+  --md-line: calc((var(--editor-font-size, 15px) - 1.5px) * var(--editor-line-height, 1.9));
+}
+
+.milkdown-host .milkdown-list-item-block li {
+  gap: 8px !important;
+}
+
+.milkdown-host .milkdown-list-item-block li .label-wrapper {
+  height: var(--md-line) !important;
+  width: auto !important;
+  min-width: 1.2em !important;
+  padding: 0 !important;
+}
+
+.milkdown-host .milkdown-list-item-block li .label-wrapper .label {
+  height: var(--md-line) !important;
+  line-height: var(--md-line) !important;
+  width: auto !important;
+  min-width: 1.2em !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+  color: var(--text2) !important;
+  /* Geometric centering leaves markers ~2px high because CJK/Latin glyphs sit
+     below the line-box center. This nudge (a font-metric constant, ~0.148em, so
+     it scales with font size and is independent of line-height) drops the marker
+     onto the text's optical center. */
+  transform: translateY(0.14em) !important;
+}
+
+.milkdown-host .milkdown-list-item-block li .label-wrapper svg {
+  width: 1.05em !important;
+  height: 1.05em !important;
+}
+
+/* first block inside an item must not add top margin, or text drops off the marker line */
+.milkdown-host .milkdown-list-item-block li .children > .content-dom > :first-child {
+  margin-top: 0 !important;
+}
+
+/* checked task box picks up the accent */
+.milkdown-host .milkdown-list-item-block li .label-wrapper .checked svg {
+  fill: var(--acc-purple) !important;
+}
+
+/* Code block: match the design's rounded card + monospaced content */
+.milkdown-host .milkdown-code-block {
+  border: 1px solid var(--hair-strong) !important;
+  border-radius: 8px !important;
+  margin: 12px 0 !important;
+  padding: 8px 14px 12px !important;
+  overflow: hidden;
+}
+
+.milkdown-host .milkdown-code-block .cm-editor,
+.milkdown-host .milkdown-code-block .cm-content {
+  font-family: var(--font-mono) !important;
+  font-size: 12.5px !important;
+  background: transparent !important;
+}
+
 /* ========== Status bar — exact 27px ========== */
 .statusbar {
   display: flex;
