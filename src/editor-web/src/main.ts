@@ -1285,6 +1285,7 @@ function renderWelcome(): string {
       <div class="welcome-logo">${hatSvg(50)}</div>
       <div class="welcome-title">Maho<span>Down</span></div>
       <div class="welcome-sub">小巧精致的 Markdown 编辑器</div>
+      <div class="welcome-ver" style="font-size:11px;color:var(--muted);opacity:.75;margin-top:2px">v${__APP_VERSION__} · build ${__BUILD_TIME__}</div>
       <div class="welcome-actions">
         <button class="btn-primary" type="button" data-action="new">✦ 新建文档</button>
         <button class="btn-secondary" type="button" data-action="open">打开文件…</button>
@@ -1590,7 +1591,7 @@ function renderSettings(): string {
         <button class="icon-btn" type="button" data-action="close-settings" style="margin-left:auto">✕</button>
       </div>
       <div class="settings-body">
-        <div class="settings-nav">${nav}<div class="version">MahoDown 1.0.0</div></div>
+        <div class="settings-nav">${nav}<div class="version">MahoDown v${__APP_VERSION__}<br />build ${__BUILD_TIME__}</div></div>
         <div class="settings-content">${content}</div>
       </div>
     </div>
