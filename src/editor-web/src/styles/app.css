@@ -1063,7 +1063,19 @@
   border-radius: 8px !important;
   margin: 12px 0 !important;
   padding: 8px 14px 12px !important;
-  overflow: hidden;
+  /* Must stay visible: the language-picker dropdown pops out of the block and
+     was being clipped when the code block was short (padding already keeps the
+     editor inside the rounded corners, so hidden isn't needed here). */
+  overflow: visible !important;
+}
+
+/* Keep the language-picker list above following content when it flies out. */
+.milkdown-host .milkdown-code-block .cm-editor {
+  border-radius: 6px;
+}
+.milkdown-host .milkdown-code-block [class*="language"],
+.milkdown-host .milkdown-code-block [class*="picker"] {
+  z-index: 6;
 }
 
 .milkdown-host .milkdown-code-block .cm-editor,

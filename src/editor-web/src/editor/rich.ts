@@ -1,5 +1,8 @@
 import { Crepe } from '@milkdown/crepe';
 import { replaceAll } from '@milkdown/kit/utils';
+import { indentWithTab } from '@codemirror/commands';
+import { Prec } from '@codemirror/state';
+import { keymap } from '@codemirror/view';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
 
@@ -30,6 +33,14 @@ export function mountRichEditor(
       [Crepe.Feature.CodeMirror]: true,
       [Crepe.Feature.Table]: true,
       [Crepe.Feature.Latex]: true
+    },
+    featureConfigs: {
+      [Crepe.Feature.CodeMirror]: {
+        // Tab / Shift-Tab indent inside code blocks (CodeMirror ships no Tab
+        // binding by default). Prec.highest so Tab indents rather than being
+        // swallowed by any default binding; indentWithTab also de-indents.
+        extensions: [Prec.highest(keymap.of([indentWithTab]))]
+      }
     }
   });
 
