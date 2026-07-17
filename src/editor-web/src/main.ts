@@ -2017,9 +2017,9 @@ function renderEditor(): string {
           <span>专注</span>
           <span class="track"><span class="knob"></span></span>
         </button>
+        <button type="button" class="ai-toggle ${state.aiPanelOpen ? 'on' : ''}" data-action="toggle-ai" title="AI 助手 · 与文档对话">✦ AI</button>
       </div>
       <div class="title-right">
-        <button type="button" class="ai-toggle ${state.aiPanelOpen ? 'on' : ''}" data-action="toggle-ai" title="AI 助手 · 与文档对话">✦ AI</button>
         <div class="title-drag" data-tauri-drag-region aria-hidden="true"></div>
         <div class="title-actions">${windowControlsHtml()}</div>
       </div>
