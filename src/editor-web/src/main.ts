@@ -1575,7 +1575,7 @@ function renderSettings(): string {
   } else {
     content = `
       <h2>通用</h2>
-      <p class="desc">MahoDown 1.0.0 · 小巧精致的 Markdown 编辑器</p>
+      <p class="desc">MahoDown v${__APP_VERSION__} · 小巧精致的 Markdown 编辑器</p>
       <div class="field-row"><label>语言</label><div>简体中文</div></div>
       <div class="field-row"><label>壳</label><div>Tauri 2 · 跨平台</div></div>
       <div class="field-row"><label>编辑器</label><div>Milkdown Crepe · CodeMirror</div></div>
@@ -1965,7 +1965,7 @@ function runMenuCommand(cmd: string | undefined): void {
     return;
   }
   if (cmd === 'update') {
-    showToast('当前已是最新版本 MahoDown 1.0.0');
+    showToast(`当前已是最新版本 MahoDown v${__APP_VERSION__}`);
     return;
   }
   if (cmd === 'about') {
