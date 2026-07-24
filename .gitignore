@@ -21,3 +21,7 @@ node_modules/
 
 # --- Misc ---
 *.log
+
+# Local notes (not published)
+docs/
+
