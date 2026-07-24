@@ -23,9 +23,44 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // WebView2 is Chromium-based on Windows; safari14 only for macOS builds.
     target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari14',
     minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,
-    sourcemap: !!process.env.TAURI_ENV_DEBUG
+    sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    cssCodeSplit: true,
+    modulePreload: {
+      polyfill: false
+    },
+    reportCompressedSize: false,
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return;
+          }
+          if (id.includes('@milkdown') || id.includes('prosemirror') || id.includes('/katex')) {
+            return 'milkdown';
+          }
+          if (
+            id.includes('@codemirror') ||
+            id.includes('codemirror') ||
+            id.includes('@lezer') ||
+            id.includes('/crelt') ||
+            id.includes('/style-mod') ||
+            id.includes('/w3c-keyname')
+          ) {
+            return 'codemirror';
+          }
+          if (id.includes('highlight.js')) {
+            return 'hljs';
+          }
+          if (id.includes('@tauri-apps')) {
+            return 'tauri';
+          }
+        }
+      }
+    }
   },
   test: {
     environment: 'jsdom'

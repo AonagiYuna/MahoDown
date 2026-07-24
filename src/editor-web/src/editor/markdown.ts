@@ -1,6 +1,34 @@
-import { highlightCode, languageLabel } from './highlight';
-
 export const DOC_ASSET_ORIGIN = 'https://doc.mahodown.local';
+
+type HighlightMod = typeof import('./highlight');
+let highlightMod: HighlightMod | null = null;
+let highlightLoad: Promise<HighlightMod> | null = null;
+
+/** Prefetch hljs after first paint; preview works uncolored until ready. */
+export function preloadHighlight(): Promise<HighlightMod> {
+  if (!highlightLoad) {
+    highlightLoad = import('./highlight').then((m) => {
+      highlightMod = m;
+      return m;
+    });
+  }
+  return highlightLoad;
+}
+
+function languageLabel(lang?: string): string {
+  return highlightMod?.languageLabel(lang) ?? ((lang ?? '').trim() || 'text');
+}
+
+function highlightCode(code: string, lang?: string): string {
+  if (!highlightMod) {
+    return code
+      .replace(/\n$/, '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+  return highlightMod.highlightCode(code, lang);
+}
 
 export function normalizeMarkdown(markdown: string): string {
   const normalized = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n');

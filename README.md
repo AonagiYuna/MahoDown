@@ -67,6 +67,16 @@ cargo test    --manifest-path src-tauri/Cargo.toml
 
 安装启动图 v1 不强制；需要商店上架时再补。
 
+## 开源与检查更新
+
+菜单 **检查更新** 会查询 GitHub 仓库的 **latest Release**，对比本地版本；有新版时打开浏览器下载安装包。
+
+1. 把代码推到 GitHub 公开仓库  
+2. 仓库已配置为 [AonagiYuna/MahoDown](https://github.com/AonagiYuna/MahoDown)（见 `src-tauri/src/update.rs`）  
+3. 发版本时打 tag（如 `v0.1.7`），并把 `MahoDown_*_x64-setup.exe` 传到 Release 附件  
+
+详见 [`docs/RELEASES.md`](docs/RELEASES.md)。
+
 ## 决策
 
 见 `docs/DECISIONS.md`。

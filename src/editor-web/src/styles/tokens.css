@@ -32,9 +32,9 @@
   --prose-w: clamp(480px, 56vw, 920px);
   --prose-pad-x: clamp(24px, 4vw, 64px);
   --ui-scale: 1;
-  --font-ui: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-  --font-serif: "Noto Serif SC", "Songti SC", serif;
-  --font-mono: "JetBrains Mono", Consolas, monospace;
+  --font-ui: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-serif: "Songti SC", "SimSun", "Noto Serif CJK SC", "STSong", serif;
+  --font-mono: "Cascadia Mono", "Consolas", "Sarasa Mono SC", monospace;
   --grad: linear-gradient(135deg, #5b8fdd, #9d8cf0);
   --grad-soft: linear-gradient(135deg, rgba(91, 143, 221, 0.12), rgba(157, 140, 240, 0.14));
   --selection: rgba(157, 140, 240, 0.32);

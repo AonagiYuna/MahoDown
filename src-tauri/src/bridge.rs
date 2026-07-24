@@ -12,6 +12,7 @@ use crate::images;
 use crate::settings::{
     load_settings, merge_settings, remember_recent, save_settings, set_secret, settings_to_json,
 };
+use crate::update;
 
 pub struct AppState {
     pub current_file: Mutex<Option<String>>,
@@ -19,6 +20,8 @@ pub struct AppState {
     /// File path passed on the command line (file association / "open with").
     /// Consumed once by the frontend via app:editorReady.
     pub launch_file: Mutex<Option<String>>,
+    /// Pre-read markdown for launch_file (same lifetime / single consume).
+    pub launch_markdown: Mutex<Option<String>>,
 }
 
 impl Default for AppState {
@@ -27,6 +30,7 @@ impl Default for AppState {
             current_file: Mutex::new(None),
             is_dirty: Mutex::new(false),
             launch_file: Mutex::new(None),
+            launch_markdown: Mutex::new(None),
         }
     }
 }
@@ -40,6 +44,19 @@ pub async fn bridge_dispatch(
 ) -> Result<Value, String> {
     let state = Arc::clone(state.inner());
     let app2 = app.clone();
+    // Lightweight startup / settings reads stay on the async worker — spawn_blocking
+    // adds thread-pool latency that shows up on every cold launch.
+    let light = matches!(
+        command.as_str(),
+        "app:editorReady"
+            | "app:getSettings"
+            | "app:getRecentFiles"
+            | "app:setDirtyState"
+            | "ai:presets"
+    );
+    if light {
+        return dispatch_sync(&app2, &state, &command, payload);
+    }
     tokio::task::spawn_blocking(move || dispatch_sync(&app2, &state, &command, payload))
         .await
         .map_err(|e| e.to_string())?
@@ -52,10 +69,7 @@ fn dispatch_sync(
     payload: Value,
 ) -> Result<Value, String> {
     match command {
-        "app:editorReady" => {
-            let open = state.launch_file.lock().unwrap().take();
-            Ok(json!({ "isReady": true, "captionInsetPx": 0, "openPath": open }))
-        }
+        "app:editorReady" => editor_ready(app, state),
         "app:setDirtyState" => {
             let dirty = payload
                 .get("isDirty")
@@ -121,29 +135,25 @@ fn dispatch_sync(
             ai::chat(&messages, document, model)
         }
         "ai:presets" => Ok(json!({ "presets": ai::presets() })),
+        "app:checkUpdate" => update::check_update(),
+        "app:openExternal" => {
+            let url = payload
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or("url required")?;
+            update::open_external(url)?;
+            Ok(json!({ "ok": true }))
+        },
+        "app:getUpdateMeta" => Ok(json!({
+            "currentVersion": env!("CARGO_PKG_VERSION"),
+            "repo": update::GITHUB_REPO,
+            "repoUrl": update::repo_web_url(),
+            "releasesUrl": update::releases_url(),
+            "configured": !update::GITHUB_REPO.contains("YOUR_GITHUB"),
+        })),
         "app:getRecentFiles" => {
             let s = load_settings();
-            let items: Vec<Value> = s
-                .recent_files
-                .iter()
-                .filter(|p| Path::new(p).exists())
-                .map(|p| {
-                    let name = Path::new(p)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(p)
-                        .to_string();
-                    let mtime = fs::metadata(p)
-                        .and_then(|m| m.modified())
-                        .map(|t| {
-                            let dt: chrono::DateTime<chrono::Utc> = t.into();
-                            dt.to_rfc3339()
-                        })
-                        .unwrap_or_default();
-                    json!({ "filePath": p, "fileName": name, "lastWriteTime": mtime })
-                })
-                .collect();
-            Ok(json!({ "items": items }))
+            Ok(json!({ "items": recent_items(&s) }))
         }
         "app:setSecret" => {
             let host_id = payload
@@ -267,6 +277,68 @@ fn print_document(_payload: &Value) -> Result<Value, String> {
     Ok(json!({
         "ok": true,
         "note": "请使用前端应用内打印"
+    }))
+}
+
+fn ensure_nl(s: &str) -> String {
+    let normalized = s.replace("\r\n", "\n").replace('\r', "\n");
+    if normalized.ends_with('\n') {
+        normalized
+    } else {
+        format!("{normalized}\n")
+    }
+}
+
+fn recent_items(settings: &crate::settings::AppSettings) -> Vec<Value> {
+    settings
+        .recent_files
+        .iter()
+        .filter(|p| Path::new(p).exists())
+        .take(12)
+        .map(|p| {
+            let name = Path::new(p)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(p)
+                .to_string();
+            // Skip mtime stat on the hot path — UI only needs path + name at boot.
+            json!({ "filePath": p, "fileName": name, "lastWriteTime": "" })
+        })
+        .collect()
+}
+
+/// Single cold-start payload: settings + optional pre-opened association doc.
+fn editor_ready(app: &AppHandle, state: &AppState) -> Result<Value, String> {
+    let open = state.launch_file.lock().unwrap().take();
+    let mut markdown = state.launch_markdown.lock().unwrap().take();
+    let mut settings = load_settings();
+
+    if let Some(ref path) = open {
+        if markdown.is_none() {
+            markdown = fs::read_to_string(path).ok();
+        }
+        *state.current_file.lock().unwrap() = Some(path.clone());
+        *state.is_dirty.lock().unwrap() = false;
+        remember_recent(&mut settings, path);
+        // Persist recent list off the critical path.
+        let to_save = settings.clone();
+        std::thread::spawn(move || {
+            let _ = save_settings(&to_save);
+        });
+        update_title(app, state);
+    }
+
+    let settings_json = ai::merge_ai_into_settings_json(settings_to_json(&settings), &settings);
+    let recent = recent_items(&settings);
+    let md_out = markdown.map(|m| ensure_nl(&m));
+
+    Ok(json!({
+        "isReady": true,
+        "captionInsetPx": 0,
+        "openPath": open,
+        "markdown": md_out,
+        "settings": settings_json,
+        "recent": recent,
     }))
 }
 
@@ -553,13 +625,4 @@ fn xml_esc(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
-}
-
-fn ensure_nl(s: &str) -> String {
-    let n = s.replace("\r\n", "\n").replace('\r', "\n");
-    if n.ends_with('\n') {
-        n
-    } else {
-        format!("{n}\n")
-    }
 }

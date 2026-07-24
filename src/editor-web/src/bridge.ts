@@ -33,8 +33,10 @@ function isTauri(): boolean {
   return typeof window !== 'undefined' && typeof window.__TAURI_INTERNALS__ !== 'undefined';
 }
 
+// Static import avoids a dynamic-import hop on every first bridge call (cold start).
+import { invoke } from '@tauri-apps/api/core';
+
 async function sendViaTauri<T>(command: string, payload: BridgePayload): Promise<T> {
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke<T>('bridge_dispatch', { command, payload });
 }
 

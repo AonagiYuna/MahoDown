@@ -32,7 +32,8 @@ export function mountRichEditor(
       [Crepe.Feature.ImageBlock]: true,
       [Crepe.Feature.CodeMirror]: true,
       [Crepe.Feature.Table]: true,
-      [Crepe.Feature.Latex]: true
+      // Latex pulls KaTeX (large). Off by default for faster first editor open.
+      [Crepe.Feature.Latex]: false
     },
     featureConfigs: {
       [Crepe.Feature.CodeMirror]: {

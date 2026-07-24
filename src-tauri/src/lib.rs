@@ -4,17 +4,18 @@ mod export_html;
 mod history;
 mod images;
 mod settings;
+mod update;
 
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 
 use bridge::{bridge_dispatch, AppState};
 use tauri::Manager;
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    // A .md opened via "open with" / file association arrives as a CLI arg.
-    let launch_file = std::env::args().skip(1).find(|a| {
-        let p = std::path::Path::new(a);
+fn find_launch_file() -> Option<String> {
+    std::env::args().skip(1).find(|a| {
+        let p = Path::new(a);
         p.is_file()
             && matches!(
                 p.extension()
@@ -23,27 +24,43 @@ pub fn run() {
                     .as_deref(),
                 Some("md") | Some("markdown") | Some("txt")
             )
-    });
+    })
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    // Pre-read association target before the event loop so the first IPC can
+    // return document bytes without a second disk round-trip.
+    let launch_file = find_launch_file();
+    let launch_markdown = launch_file
+        .as_ref()
+        .and_then(|p| fs::read_to_string(p).ok());
+    let open_on_launch = launch_file.is_some();
+
     let state = Arc::new(AppState::default());
-    if launch_file.is_some() {
-        *state.launch_file.lock().unwrap() = launch_file;
+    if let Some(path) = launch_file {
+        *state.launch_file.lock().unwrap() = Some(path);
+        *state.launch_markdown.lock().unwrap() = launch_markdown;
     }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(state)
-        .setup(|app| {
-            // The window starts hidden (config) and the frontend shows it once
-            // painted. Fallback: reveal it after 5s so a slow/broken frontend
-            // can never leave the window invisible.
-            let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                if let Some(win) = handle.get_webview_window("main") {
-                    let _ = win.show();
+        .setup(move |app| {
+            if let Some(win) = app.get_webview_window("main") {
+                // File-association launches should open at editor size immediately
+                // (avoids welcome→editor resize flash after JS boots).
+                if open_on_launch {
+                    use tauri::{LogicalSize, Size};
+                    let _ = win.set_size(Size::Logical(LogicalSize::new(1180.0, 760.0)));
+                    let _ = win.set_min_size(Some(Size::Logical(LogicalSize::new(800.0, 520.0))));
+                    let _ = win.center();
                 }
-            });
+                // Config may already be visible; show+focus is cheap and kills races.
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![bridge_dispatch])

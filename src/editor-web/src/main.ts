@@ -1,18 +1,18 @@
 import './styles/app.css';
 import './styles/code-theme.css';
 import { sendBridgeRequest } from './bridge';
-import { mountRichEditor, type RichEditor } from './editor/rich';
-import { mountSourceEditor, type SourceEditor } from './editor/source';
+import type { RichEditor } from './editor/rich';
+import type { SourceEditor } from './editor/source';
 import {
   countWords,
   estimateReadMinutes,
   extractOutline,
   normalizeMarkdown,
+  preloadHighlight,
   renderPreviewHtml,
   toStorageMarkdown
 } from './editor/markdown';
 import { clearAssetCache, collapseAssetUrls, expandImagesForDisplay } from './editor/assets';
-import { printInApp } from './editor/print';
 import { findInMarkdown, groupSnapshotsByDay, simpleLineDiff } from './editor/search';
 import { appendImageMarkdown, firstImageFile, uploadImageFile } from './imageUpload';
 
@@ -93,6 +93,23 @@ type AppState = {
   aiChatModel: string;
   aiPendingDoc: string | null;
   aiChatInput: string;
+  updateDialog: UpdateCheckResult | null;
+};
+
+type UpdateCheckResult = {
+  ok?: boolean;
+  configured?: boolean;
+  currentVersion?: string;
+  latestVersion?: string;
+  updateAvailable?: boolean;
+  message?: string;
+  htmlUrl?: string;
+  downloadUrl?: string | null;
+  notes?: string;
+  repoUrl?: string;
+  releasesUrl?: string;
+  releaseName?: string;
+  tagName?: string;
 };
 
 const DEFAULT_MARKDOWN = `# MahoDown
@@ -165,7 +182,8 @@ const state: AppState = {
   aiChatBusy: false,
   aiChatModel: '',
   aiPendingDoc: null,
-  aiChatInput: ''
+  aiChatInput: '',
+  updateDialog: null
 };
 
 const appRoot = document.querySelector<HTMLElement>('#app');
@@ -295,6 +313,71 @@ async function applyWindowLayoutForView(view: 'welcome' | 'editor'): Promise<voi
     }
   } catch {
     // browser / no window API
+  }
+}
+
+const BOOT_CACHE_KEY = 'maho.bootCache';
+
+function readBootCache(): {
+  theme?: string;
+  mode?: string;
+  uiScale?: number;
+  fontSize?: number;
+  lineHeight?: number;
+  lineWidth?: string;
+} {
+  try {
+    return JSON.parse(localStorage.getItem(BOOT_CACHE_KEY) || '{}') as {
+      theme?: string;
+      mode?: string;
+      uiScale?: number;
+      fontSize?: number;
+      lineHeight?: number;
+      lineWidth?: string;
+    };
+  } catch {
+    return {};
+  }
+}
+
+function writeBootCache(): void {
+  try {
+    localStorage.setItem(
+      BOOT_CACHE_KEY,
+      JSON.stringify({
+        theme: state.themePreference,
+        mode: state.defaultMode || state.mode,
+        uiScale: state.uiScale,
+        fontSize: state.fontSize,
+        lineHeight: state.lineHeight,
+        lineWidth: state.lineWidth
+      })
+    );
+  } catch {
+    // private mode / quota
+  }
+}
+
+function applyBootCache(): void {
+  const c = readBootCache();
+  if (c.theme === 'system' || c.theme === 'dark' || c.theme === 'light') {
+    state.themePreference = c.theme;
+  }
+  if (c.mode === 'src' || c.mode === 'split' || c.mode === 'rich') {
+    state.mode = c.mode;
+    state.defaultMode = c.mode;
+  }
+  if (typeof c.uiScale === 'number' && c.uiScale >= 0.85 && c.uiScale <= 1.3) {
+    state.uiScale = c.uiScale;
+  }
+  if (typeof c.fontSize === 'number' && c.fontSize >= 12 && c.fontSize <= 24) {
+    state.fontSize = c.fontSize;
+  }
+  if (typeof c.lineHeight === 'number' && c.lineHeight >= 1.2 && c.lineHeight <= 2.4) {
+    state.lineHeight = c.lineHeight;
+  }
+  if (c.lineWidth === 'narrow' || c.lineWidth === 'standard' || c.lineWidth === 'full') {
+    state.lineWidth = c.lineWidth;
   }
 }
 
@@ -516,65 +599,77 @@ async function loadRecent(): Promise<void> {
   }
 }
 
-async function loadSettings(): Promise<void> {
-  try {
-    const settings = await sendBridgeRequest<{
-      defaultImageHost?: string;
-      imageHostConfigs?: HostConfigs;
-      pasteUploadImages?: boolean;
-      keepLocalOnUploadFailure?: boolean;
-      theme?: string;
-      defaultMode?: string;
-      fontSize?: number;
-      lineHeight?: number;
-      autoSnapshotMinutes?: number;
-      uiScale?: number;
-    }>('app:getSettings', {});
-    state.defaultHost = settings.defaultImageHost ?? state.defaultHost;
-    state.hostConfigs = settings.imageHostConfigs ?? {};
-    state.pasteUploadImages = settings.pasteUploadImages ?? true;
-    state.keepLocalOnUploadFailure = settings.keepLocalOnUploadFailure ?? true;
-    if (settings.theme === 'system' || settings.theme === 'dark' || settings.theme === 'light') {
-      state.themePreference = settings.theme;
-    }
-    if (settings.defaultMode === 'src' || settings.defaultMode === 'split' || settings.defaultMode === 'rich') {
+type SettingsPayload = {
+  defaultImageHost?: string;
+  imageHostConfigs?: HostConfigs;
+  pasteUploadImages?: boolean;
+  keepLocalOnUploadFailure?: boolean;
+  theme?: string;
+  defaultMode?: string;
+  fontSize?: number;
+  lineHeight?: number;
+  autoSnapshotMinutes?: number;
+  uiScale?: number;
+  lineWidth?: string;
+  autoPairBrackets?: boolean;
+  expandMarkdownOnCaret?: boolean;
+  stripPasteFormatting?: boolean;
+  autoSpaceCjk?: boolean;
+  aiBaseUrl?: string;
+  aiModel?: string;
+  aiApiKey?: string;
+  hasAiKey?: boolean;
+};
+
+function applySettingsObject(settings: SettingsPayload, opts?: { forceMode?: boolean }): void {
+  state.defaultHost = settings.defaultImageHost ?? state.defaultHost;
+  state.hostConfigs = settings.imageHostConfigs ?? state.hostConfigs;
+  state.pasteUploadImages = settings.pasteUploadImages ?? true;
+  state.keepLocalOnUploadFailure = settings.keepLocalOnUploadFailure ?? true;
+  if (settings.theme === 'system' || settings.theme === 'dark' || settings.theme === 'light') {
+    state.themePreference = settings.theme;
+  }
+  if (settings.defaultMode === 'src' || settings.defaultMode === 'split' || settings.defaultMode === 'rich') {
+    state.defaultMode = settings.defaultMode;
+    if (opts?.forceMode || state.view === 'welcome') {
       state.mode = settings.defaultMode;
     }
-    if (typeof settings.fontSize === 'number' && settings.fontSize >= 12 && settings.fontSize <= 24) {
-      state.fontSize = settings.fontSize;
-    }
-    if (typeof settings.lineHeight === 'number' && settings.lineHeight >= 1.2 && settings.lineHeight <= 2.4) {
-      state.lineHeight = settings.lineHeight;
-    }
-    if (typeof settings.autoSnapshotMinutes === 'number' && settings.autoSnapshotMinutes >= 0) {
-      state.autoSnapshotMinutes = settings.autoSnapshotMinutes;
-    }
-    if (typeof settings.uiScale === 'number' && settings.uiScale >= 0.85 && settings.uiScale <= 1.3) {
-      state.uiScale = settings.uiScale;
-    }
-    const sAny = settings as Record<string, unknown>;
-    if (sAny.lineWidth === 'narrow' || sAny.lineWidth === 'standard' || sAny.lineWidth === 'full') {
-      state.lineWidth = sAny.lineWidth;
-    }
-    if (sAny.defaultMode === 'src' || sAny.defaultMode === 'split' || sAny.defaultMode === 'rich') {
-      state.defaultMode = sAny.defaultMode;
-      if (state.view === 'welcome') {
-        state.mode = sAny.defaultMode;
-      }
-    }
-    if (typeof sAny.autoPairBrackets === 'boolean') state.autoPairBrackets = sAny.autoPairBrackets;
-    if (typeof sAny.expandMarkdownOnCaret === 'boolean') {
-      state.expandMarkdownOnCaret = sAny.expandMarkdownOnCaret;
-    }
-    if (typeof sAny.stripPasteFormatting === 'boolean') {
-      state.stripPasteFormatting = sAny.stripPasteFormatting;
-    }
-    if (typeof sAny.autoSpaceCjk === 'boolean') state.autoSpaceCjk = sAny.autoSpaceCjk;
-    if (typeof sAny.aiBaseUrl === 'string' && sAny.aiBaseUrl) state.aiBaseUrl = sAny.aiBaseUrl;
-    if (typeof sAny.aiModel === 'string' && sAny.aiModel) state.aiModel = sAny.aiModel;
-    if (typeof sAny.aiApiKey === 'string') state.aiApiKey = sAny.aiApiKey;
-    if (typeof sAny.hasAiKey === 'boolean') state.hasAiKey = sAny.hasAiKey;
-    scheduleAutoSnapshot();
+  }
+  if (typeof settings.fontSize === 'number' && settings.fontSize >= 12 && settings.fontSize <= 24) {
+    state.fontSize = settings.fontSize;
+  }
+  if (typeof settings.lineHeight === 'number' && settings.lineHeight >= 1.2 && settings.lineHeight <= 2.4) {
+    state.lineHeight = settings.lineHeight;
+  }
+  if (typeof settings.autoSnapshotMinutes === 'number' && settings.autoSnapshotMinutes >= 0) {
+    state.autoSnapshotMinutes = settings.autoSnapshotMinutes;
+  }
+  if (typeof settings.uiScale === 'number' && settings.uiScale >= 0.85 && settings.uiScale <= 1.3) {
+    state.uiScale = settings.uiScale;
+  }
+  if (settings.lineWidth === 'narrow' || settings.lineWidth === 'standard' || settings.lineWidth === 'full') {
+    state.lineWidth = settings.lineWidth;
+  }
+  if (typeof settings.autoPairBrackets === 'boolean') state.autoPairBrackets = settings.autoPairBrackets;
+  if (typeof settings.expandMarkdownOnCaret === 'boolean') {
+    state.expandMarkdownOnCaret = settings.expandMarkdownOnCaret;
+  }
+  if (typeof settings.stripPasteFormatting === 'boolean') {
+    state.stripPasteFormatting = settings.stripPasteFormatting;
+  }
+  if (typeof settings.autoSpaceCjk === 'boolean') state.autoSpaceCjk = settings.autoSpaceCjk;
+  if (typeof settings.aiBaseUrl === 'string' && settings.aiBaseUrl) state.aiBaseUrl = settings.aiBaseUrl;
+  if (typeof settings.aiModel === 'string' && settings.aiModel) state.aiModel = settings.aiModel;
+  if (typeof settings.aiApiKey === 'string') state.aiApiKey = settings.aiApiKey;
+  if (typeof settings.hasAiKey === 'boolean') state.hasAiKey = settings.hasAiKey;
+  scheduleAutoSnapshot();
+  writeBootCache();
+}
+
+async function loadSettings(): Promise<void> {
+  try {
+    const settings = await sendBridgeRequest<SettingsPayload>('app:getSettings', {});
+    applySettingsObject(settings);
   } catch {
     // keep defaults
   }
@@ -669,12 +764,26 @@ async function applyContentReplace(next: string): Promise<void> {
   renderStatusAndOutline();
 }
 
+/** Build full-doc markdown after a selection-level AI edit (or append for continue). */
+function previewDocAfterAiEdit(action: 'polish' | 'continue' | 'translate', content: string): string {
+  const full = getCurrentMarkdown();
+  if (action === 'continue') {
+    return normalizeMarkdown(full.endsWith('\n') ? `${full}${content}\n` : `${full}\n\n${content}\n`);
+  }
+  const selected = getEditorSelection();
+  if (selected && full.includes(selected)) {
+    return normalizeMarkdown(full.replace(selected, content));
+  }
+  // Fallback: append if we lost the selection
+  return normalizeMarkdown(full.endsWith('\n') ? `${full}${content}\n` : `${full}\n\n${content}\n`);
+}
+
 async function runAiAction(action: 'polish' | 'continue' | 'translate'): Promise<void> {
   if (state.view !== 'editor') {
     showToast('请先打开文档');
     return;
   }
-  if (state.aiBusy) {
+  if (state.aiBusy || state.aiChatBusy) {
     return;
   }
   if (!state.hasAiKey && !state.aiApiKey) {
@@ -699,11 +808,24 @@ async function runAiAction(action: 'polish' | 'continue' | 'translate'): Promise
       ? selected || full.slice(Math.max(0, full.length - 2500))
       : full.slice(Math.max(0, full.length - 800));
 
-  state.aiBusy = true;
   const labels = { polish: '润色', continue: '续写', translate: '翻译' } as const;
-  showToast(`AI ${labels[action]}中…`, 60_000);
+  const userPrompt =
+    action === 'continue'
+      ? '请续写下一段'
+      : action === 'polish'
+        ? `请润色选中内容：\n${selected.slice(0, 200)}${selected.length > 200 ? '…' : ''}`
+        : `请翻译选中内容：\n${selected.slice(0, 200)}${selected.length > 200 ? '…' : ''}`;
+
+  // Show work in the side panel with review — never silent apply.
+  state.aiPanelOpen = true;
+  if (!state.aiChatModel) state.aiChatModel = state.aiModel;
+  state.aiChat.push({ role: 'user', content: userPrompt });
+  state.aiChatBusy = true;
+  state.aiBusy = true;
+  render();
+  scrollAiToBottom();
+
   try {
-    // Persist key if user typed a new one in settings without saving
     if (state.aiApiKey && state.aiApiKey !== '********') {
       await persistSettings();
     }
@@ -714,21 +836,29 @@ async function runAiAction(action: 'polish' | 'continue' | 'translate'): Promise
     });
     const content = (result.content ?? '').trim();
     if (!content) {
-      showToast('AI 未返回内容');
+      state.aiChat.push({ role: 'assistant', content: 'AI 未返回内容' });
       return;
     }
-    if (action === 'continue') {
-      const base = getCurrentMarkdown();
-      const next = base.endsWith('\n') ? `${base}${content}\n` : `${base}\n\n${content}\n`;
-      await applyContentReplace(next);
+    const nextDoc = previewDocAfterAiEdit(action, content);
+    state.aiChat.push({
+      role: 'assistant',
+      content: `已完成${labels[action]}。下方用绿/红标出与当前文档的差异，确认后点「接受改动」。`
+    });
+    if (normalizeMarkdown(nextDoc) !== normalizeMarkdown(getCurrentMarkdown())) {
+      state.aiPendingDoc = nextDoc;
     } else {
-      replaceEditorSelection(content);
+      state.aiChat.push({ role: 'assistant', content: '（与当前文档无差异）' });
     }
-    showToast(`✦ AI ${labels[action]}完成`);
   } catch (error) {
-    showToast(error instanceof Error ? error.message : 'AI 请求失败');
+    state.aiChat.push({
+      role: 'assistant',
+      content: '⚠ ' + (error instanceof Error ? error.message : 'AI 请求失败')
+    });
   } finally {
     state.aiBusy = false;
+    state.aiChatBusy = false;
+    render();
+    scrollAiToBottom();
   }
 }
 
@@ -844,22 +974,36 @@ function renderAiPanel(): string {
   const pending =
     state.aiPendingDoc != null
       ? `<div class="ai-review">
+           <div class="ai-review-label">文档改动预览（未写入，需手动接受）</div>
            ${renderDiffHtml(getCurrentMarkdown(), state.aiPendingDoc)}
            <div class="ai-review-actions">
-             <button type="button" class="btn-primary" data-ai-accept>接受改动</button>
+             <button type="button" class="btn-primary" data-ai-accept>✦ 接受改动</button>
              <button type="button" class="btn-secondary" data-ai-reject>放弃</button>
            </div>
          </div>`
       : '';
   const empty =
     state.aiChat.length === 0 && !state.aiChatBusy
-      ? `<div class="ai-empty">和 AI 聊聊这篇文档，让它帮你改：<br>“把第二段润色一下”、“给全文加个结尾总结”、“标题换个更抓人的”。<br><br>它改动的地方会在下面用<span class="add">绿</span>/<span class="del">红</span>对比标出来，你确认后才会应用。</div>`
+      ? `<div class="ai-empty">和 AI 聊聊这篇文档，让它帮你改：<br>· “把第二段润色一下”<br>· “给全文加个结尾总结”<br>· “标题换个更抓人的”<br><br>它<strong>不会直接改文档</strong>：改动用<span class="add">绿</span>/<span class="del">红</span>标出，你点「接受」后才写入。</div>`
       : '';
+  const modelVal = escapeHtml(currentChatModel());
   return `
   <aside class="ai-panel" aria-label="AI 助手">
     <div class="ai-panel-head">
       <span class="ai-panel-title">✦ AI 助手</span>
-      <input class="ai-model" data-ai-model list="ai-model-list" value="${escapeHtml(currentChatModel())}" title="使用的模型（沿用设置里的服务商与 Key）" spellcheck="false" />
+      <label class="ai-model-wrap" title="本会话模型（Key/服务商仍用设置 → AI）">
+        <span class="ai-model-label">模型</span>
+        <select class="ai-model" data-ai-model>
+          ${['deepseek-chat', 'deepseek-reasoner', 'gpt-4o-mini', 'gpt-4o', 'moonshot-v1-8k', 'qwen2.5', state.aiModel]
+            .filter((v, i, a) => v && a.indexOf(v) === i)
+            .map(
+              (m) =>
+                `<option value="${escapeHtml(m)}" ${m === currentChatModel() ? 'selected' : ''}>${escapeHtml(m)}</option>`
+            )
+            .join('')}
+        </select>
+      </label>
+      <input class="ai-model-custom" data-ai-model-custom list="ai-model-list" value="${modelVal}" placeholder="或输入模型名" spellcheck="false" />
       <datalist id="ai-model-list">
         <option value="deepseek-chat"></option>
         <option value="deepseek-reasoner"></option>
@@ -958,9 +1102,23 @@ function bindAiPanel(): void {
   });
   app.querySelector('[data-ai-accept]')?.addEventListener('click', () => void acceptAiEdit());
   app.querySelector('[data-ai-reject]')?.addEventListener('click', () => rejectAiEdit());
-  const model = app.querySelector<HTMLInputElement>('[data-ai-model]');
-  model?.addEventListener('change', () => {
-    state.aiChatModel = model.value.trim();
+  const modelSel = app.querySelector<HTMLSelectElement>('select[data-ai-model]');
+  const modelCustom = app.querySelector<HTMLInputElement>('[data-ai-model-custom]');
+  modelSel?.addEventListener('change', () => {
+    const v = modelSel.value.trim();
+    if (v) {
+      state.aiChatModel = v;
+      if (modelCustom) modelCustom.value = v;
+    }
+  });
+  modelCustom?.addEventListener('change', () => {
+    const v = modelCustom.value.trim();
+    if (v) {
+      state.aiChatModel = v;
+      if (modelSel && [...modelSel.options].some((o) => o.value === v)) {
+        modelSel.value = v;
+      }
+    }
   });
 }
 
@@ -1248,6 +1406,7 @@ async function printDocument(): Promise<void> {
     // Embed local images as data URLs so print preview can show them (no external browser).
     const storage = normalizeMarkdown(getCurrentMarkdown());
     const forPrint = await expandImagesForDisplay(storage);
+    const { printInApp } = await import('./editor/print');
     await printInApp({
       title: fileName().replace(/\.md$/i, '') || 'MahoDown',
       markdownForDisplay: forPrint,
@@ -1300,8 +1459,8 @@ async function openDocument(path?: string): Promise<void> {
     state.markdown = md;
     lastSavedMarkdown = normalizeMarkdown(md);
     state.isDirty = false;
-    await loadRecent();
     render();
+    void loadRecent();
     void sendBridgeRequest('app:setDirtyState', { isDirty: false }).catch(() => undefined);
   } catch (error) {
     showToast(error instanceof Error ? error.message : '打开失败');
@@ -1494,6 +1653,7 @@ function paletteItems(): Array<{ id: string; label: string; kbd?: string; run: (
     { id: 'ai-polish', label: '✦ 润色选中内容', kbd: 'AI', run: () => void runAiAction('polish') },
     { id: 'ai-continue', label: '续写下一段', kbd: 'AI', run: () => void runAiAction('continue') },
     { id: 'ai-translate', label: '翻译选中内容', kbd: 'AI', run: () => void runAiAction('translate') },
+    { id: 'check-update', label: '检查更新…', run: () => void checkForUpdates() },
     {
       id: 'ai-settings',
       label: 'AI 设置…',
@@ -1831,7 +1991,11 @@ function renderSettings(): string {
       <div class="field-row"><label>语言</label><div>简体中文</div></div>
       <div class="field-row"><label>壳</label><div>Tauri 2 · 跨平台</div></div>
       <div class="field-row"><label>编辑器</label><div>Milkdown Crepe · CodeMirror</div></div>
-      <div class="field-row"><label>自动快照</label><div>${state.autoSnapshotMinutes > 0 ? `每 ${state.autoSnapshotMinutes} 分钟` : '已关闭'}</div></div>`;
+      <div class="field-row"><label>自动快照</label><div>${state.autoSnapshotMinutes > 0 ? `每 ${state.autoSnapshotMinutes} 分钟` : '已关闭'}</div></div>
+      <div class="field-row"><label>更新</label><div>
+        <button type="button" class="btn-secondary" data-action="check-update" style="height:28px;padding:0 10px;font-size:12px">检查更新</button>
+      </div></div>
+      <p class="desc" style="margin-top:10px">开源后通过 GitHub Releases 推送版本；菜单「检查更新」会查询 latest release。</p>`;
   }
 
   return `
@@ -2050,6 +2214,7 @@ function renderEditor(): string {
       ${renderPalette()}
       ${renderHistoryOverlay()}
       ${renderSearchOverlay()}
+      ${renderUpdateDialog()}
       <div class="toast" data-toast ${state.toast ? '' : 'hidden'}>${escapeHtml(state.toast)}</div>
     </div>
     ${
@@ -2225,7 +2390,7 @@ function runMenuCommand(cmd: string | undefined): void {
     return;
   }
   if (cmd === 'update') {
-    showToast(`当前已是最新版本 MahoDown v${__APP_VERSION__}`);
+    void checkForUpdates();
     return;
   }
   if (cmd === 'about') {
@@ -2233,6 +2398,80 @@ function runMenuCommand(cmd: string | undefined): void {
     state.settingsTab = 'general';
     render();
   }
+}
+
+async function checkForUpdates(): Promise<void> {
+  showToast('正在检查更新…', 10_000);
+  try {
+    const result = await sendBridgeRequest<UpdateCheckResult>('app:checkUpdate', {});
+    state.updateDialog = result;
+    state.toast = '';
+    render();
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '检查更新失败');
+  }
+}
+
+async function openExternalUrl(url: string): Promise<void> {
+  const target = url.trim();
+  if (!target) {
+    return;
+  }
+  try {
+    await sendBridgeRequest('app:openExternal', { url: target });
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '无法打开链接');
+  }
+}
+
+function renderUpdateDialog(): string {
+  const info = state.updateDialog;
+  if (!info) {
+    return '';
+  }
+  const title = info.updateAvailable ? '发现新版本' : info.configured === false ? '更新未配置' : '检查更新';
+  const verLine =
+    info.latestVersion && info.currentVersion
+      ? `<div class="update-ver">当前 <strong>v${escapeHtml(info.currentVersion)}</strong>${
+          info.updateAvailable
+            ? ` → 最新 <strong>v${escapeHtml(info.latestVersion)}</strong>`
+            : ''
+        }</div>`
+      : `<div class="update-ver">当前 <strong>v${escapeHtml(info.currentVersion || __APP_VERSION__)}</strong></div>`;
+  const notes = (info.notes || '').trim();
+  const notesHtml = notes
+    ? `<pre class="update-notes">${escapeHtml(notes.slice(0, 1200))}${notes.length > 1200 ? '…' : ''}</pre>`
+    : '';
+  const primaryUrl = info.downloadUrl || info.htmlUrl || info.releasesUrl || '';
+  const primaryLabel = info.downloadUrl ? '下载安装包' : info.updateAvailable ? '查看 Release' : '打开 Releases';
+  const secondaryUrl = info.repoUrl || '';
+
+  return `
+  <div class="update-overlay" data-update-overlay>
+    <div class="update-card" role="dialog" aria-label="检查更新">
+      <div class="update-top">
+        <div class="brand-mark">${hatSvg(11)}</div>
+        <div class="update-title">${escapeHtml(title)}</div>
+        <button class="icon-btn" type="button" data-update-close style="margin-left:auto">✕</button>
+      </div>
+      <p class="update-msg">${escapeHtml(info.message || '')}</p>
+      ${verLine}
+      ${notesHtml}
+      <div class="update-actions">
+        ${
+          primaryUrl
+            ? `<button type="button" class="btn-primary" data-update-open="${escapeHtml(primaryUrl)}">${primaryLabel}</button>`
+            : ''
+        }
+        ${
+          secondaryUrl && secondaryUrl !== primaryUrl
+            ? `<button type="button" class="btn-secondary" data-update-open="${escapeHtml(secondaryUrl)}">GitHub 仓库</button>`
+            : ''
+        }
+        <button type="button" class="btn-secondary" data-update-close>关闭</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 function renderAppMenu(): string {
@@ -2310,20 +2549,43 @@ function bindRichEditor(): void {
   if (rich && richRoot === root) {
     return;
   }
+  // Destroy immediately so a mode switch doesn't leave a stale instance.
   rich?.destroy();
+  rich = undefined;
   richRoot = root;
-  rich = mountRichEditor(root, '', (markdown) => {
-    if (suppressRichChange) {
-      return;
-    }
-    state.markdown = collapseAssetUrls(toStorageMarkdown(markdown));
-    recomputeDirty(false);
-    scheduleOutlineRefresh();
-  });
-  void rich.ready
-    .then(() => applyRichMarkdown(state.markdown, { acceptAsSaved: !state.isDirty }))
+  const mountToken = root;
+  // Instant text while Crepe chunk loads (file-association cold path).
+  if (!mountToken.childElementCount) {
+    const preview = state.markdown.slice(0, 12000);
+    mountToken.innerHTML = `<pre class="editor-boot-md">${preview
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')}</pre>`;
+  }
+  void import('./editor/rich')
+    .then(({ mountRichEditor }) => {
+      if (state.view !== 'editor' || state.mode !== 'rich' || richRoot !== mountToken) {
+        return;
+      }
+      const live = document.querySelector<HTMLElement>('[data-rich-root]');
+      if (live !== mountToken) {
+        return;
+      }
+      mountToken.replaceChildren();
+      rich = mountRichEditor(mountToken, '', (markdown) => {
+        if (suppressRichChange) {
+          return;
+        }
+        state.markdown = collapseAssetUrls(toStorageMarkdown(markdown));
+        recomputeDirty(false);
+        scheduleOutlineRefresh();
+      });
+      return rich.ready.then(() => applyRichMarkdown(state.markdown, { acceptAsSaved: !state.isDirty }));
+    })
     .catch(() => {
-      showToast('富文本编辑器加载失败');
+      if (richRoot === mountToken) {
+        showToast('富文本编辑器加载失败');
+      }
     });
 }
 
@@ -2343,18 +2605,39 @@ function bindSourceEditor(): void {
     return;
   }
   source?.destroy();
+  source = undefined;
   sourceRoot = root;
-  source = mountSourceEditor(
-    root,
-    state.markdown,
-    (markdown) => {
-      if (suppressSourceChange) {
+  const mountToken = root;
+  void import('./editor/source')
+    .then(({ mountSourceEditor }) => {
+      if (
+        state.view !== 'editor' ||
+        (state.mode !== 'src' && state.mode !== 'split') ||
+        sourceRoot !== mountToken
+      ) {
         return;
       }
-      onMarkdownEdited(markdown);
-    },
-    { dark: state.theme === 'dark' }
-  );
+      const live = document.querySelector<HTMLElement>('[data-source-root]');
+      if (live !== mountToken) {
+        return;
+      }
+      source = mountSourceEditor(
+        mountToken,
+        state.markdown,
+        (markdown) => {
+          if (suppressSourceChange) {
+            return;
+          }
+          onMarkdownEdited(markdown);
+        },
+        { dark: state.theme === 'dark' }
+      );
+    })
+    .catch(() => {
+      if (sourceRoot === mountToken) {
+        showToast('源码编辑器加载失败');
+      }
+    });
 }
 
 function bindEvents(): void {
@@ -2389,6 +2672,9 @@ function bindEvents(): void {
       if (action === 'close-settings') {
         state.settingsOpen = false;
         render();
+      }
+      if (action === 'check-update') {
+        void checkForUpdates();
       }
       if (action === 'close-history') {
         state.historyOpen = false;
@@ -2789,6 +3075,27 @@ function bindEvents(): void {
       render();
     }
   });
+
+  const closeUpdate = () => {
+    state.updateDialog = null;
+    render();
+  };
+  app.querySelectorAll<HTMLElement>('[data-update-close]').forEach((el) => {
+    el.addEventListener('click', closeUpdate);
+  });
+  app.querySelector('[data-update-overlay]')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) {
+      closeUpdate();
+    }
+  });
+  app.querySelectorAll<HTMLElement>('[data-update-open]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const url = el.dataset.updateOpen;
+      if (url) {
+        void openExternalUrl(url);
+      }
+    });
+  });
 }
 
 function render(): void {
@@ -2980,54 +3287,98 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   }
 });
 
+// Theme/mode from last session before any IPC — kills first-frame flash.
+applyBootCache();
 applyTheme();
 scheduleAutoSnapshot();
-render();
+// Keep the HTML splash until the first real frame; don't render() yet if we can
+// jump straight into a launch document after one IPC.
+
+/** Window is visible from native config; focus is enough. */
+async function focusWindow(): Promise<void> {
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().setFocus();
+  } catch {
+    // browser / no window API
+  }
+}
+
+// Prefetch heavy editor chunks after first interactive frame.
+function warmEditorChunks(): void {
+  void import('./editor/rich');
+  void import('./editor/source');
+  void preloadHighlight();
+}
+
+function applyLaunchDocument(filePath: string, markdown: string): void {
+  state.view = 'editor';
+  state.filePath = filePath;
+  clearAssetCache();
+  state.markdown = markdown;
+  lastSavedMarkdown = normalizeMarkdown(markdown);
+  state.isDirty = false;
+  // Native side already sized the window for editor — skip resize hop.
+  lastLayoutView = 'editor';
+}
 
 void (async () => {
-  let openPath: string | undefined;
+  void focusWindow();
+
   try {
     const ready = await sendBridgeRequest<{
       isReady?: boolean;
       captionInsetPx?: number;
       openPath?: string | null;
+      markdown?: string | null;
+      settings?: SettingsPayload;
+      recent?: RecentItem[];
     }>('app:editorReady', { isReady: true });
     state.isReady = true;
-    // Native caption buttons removed (custom chrome). Keep a small reserve only if host reports one.
-    if (typeof ready?.captionInsetPx === 'number' && ready.captionInsetPx > 0) {
-      state.captionInset = ready.captionInsetPx;
-    } else {
-      state.captionInset = 0;
+    state.captionInset =
+      typeof ready?.captionInsetPx === 'number' && ready.captionInsetPx > 0 ? ready.captionInsetPx : 0;
+
+    if (ready?.settings) {
+      // Launch doc: don't clobber mode mid-open unless welcome.
+      applySettingsObject(ready.settings, { forceMode: !ready.openPath });
     }
+    if (Array.isArray(ready?.recent)) {
+      state.recent = ready.recent;
+    }
+
+    if (ready?.openPath && typeof ready.markdown === 'string') {
+      applyLaunchDocument(ready.openPath, ready.markdown);
+      applyTheme();
+      render();
+      warmEditorChunks();
+      void sendBridgeRequest('app:setDirtyState', { isDirty: false }).catch(() => undefined);
+      return;
+    }
+
     if (ready?.openPath) {
-      openPath = ready.openPath;
+      // Path without bytes (read failed earlier) — fall back to normal open.
+      applyTheme();
+      render();
+      warmEditorChunks();
+      await openDocument(ready.openPath).catch(() => undefined);
+      return;
     }
   } catch {
     state.isReady = true;
+    await loadSettings().catch(() => undefined);
   }
-  await loadSettings();
-  await loadRecent();
+
+  // Welcome path: settings/recent already applied when ready succeeded.
+  if (!state.recent.length) {
+    await loadRecent().catch(() => undefined);
+  }
   applyTheme();
   scheduleAutoSnapshot();
   render();
-  // Launched via a file association (right-click → 打开方式): open that file.
-  if (openPath) {
-    await openDocument(openPath).catch(() => undefined);
-  } else {
-    showToast('Ctrl+K 命令 · Ctrl+E 专注 · Ctrl+S 保存 · 可粘贴/拖入图片', 3600);
-  }
-  // Reveal the window only now that content + theme are painted — the config
-  // starts it hidden+centered, so this kills the top-left flash on launch.
-  try {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
-    await getCurrentWindow().show();
-  } catch {
-    // browser / no window API
-  }
+  warmEditorChunks();
+  showToast('Ctrl+K 命令 · Ctrl+E 专注 · Ctrl+S 保存 · 可粘贴/拖入图片', 3600);
 })();
 
-// Keep the maximize/restore icon correct even when the window is maximized natively
-// (double-clicking the titlebar, Windows Snap, or the OS shortcuts).
 void (async () => {
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
