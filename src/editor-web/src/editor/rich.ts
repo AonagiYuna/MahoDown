@@ -1,10 +1,29 @@
 import { Crepe } from '@milkdown/crepe';
 import { replaceAll } from '@milkdown/kit/utils';
 import { indentWithTab } from '@codemirror/commands';
+import { LanguageDescription, LanguageSupport, StreamLanguage } from '@codemirror/language';
+import { languages as cmLanguages } from '@codemirror/language-data';
 import { Prec } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
+
+const mermaidLanguage = LanguageDescription.of({
+  name: 'Mermaid',
+  alias: ['mermaid', 'mmd'],
+  extensions: ['mmd'],
+  load: () =>
+    Promise.resolve(
+      new LanguageSupport(
+        StreamLanguage.define({
+          token: (stream) => {
+            stream.next();
+            return null;
+          }
+        })
+      )
+    )
+});
 
 export type RichEditor = {
   ready: Promise<void>;
@@ -37,10 +56,8 @@ export function mountRichEditor(
     },
     featureConfigs: {
       [Crepe.Feature.CodeMirror]: {
-        // Tab / Shift-Tab indent inside code blocks (CodeMirror ships no Tab
-        // binding by default). Prec.highest so Tab indents rather than being
-        // swallowed by any default binding; indentWithTab also de-indents.
         extensions: [Prec.highest(keymap.of([indentWithTab]))],
+        languages: [mermaidLanguage, ...cmLanguages],
         renderPreview: (language, content, applyPreview) => {
           if (language.toLowerCase() !== 'mermaid') {
             return null;
