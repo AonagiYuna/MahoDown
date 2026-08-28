@@ -81,4 +81,22 @@ describe('renderPreviewHtml GFM', () => {
     expect(html).toContain('hello');
     expect(html).toContain('world');
   });
+
+  it('renders footnotes and definition lists', () => {
+    const html = renderPreviewHtml('See note.[^a]\n\nTerm\n: Meaning\n\n[^a]: Extra detail\n');
+    expect(html).toContain('class="fn-ref"');
+    expect(html).toContain('id="fn-a"');
+    expect(html).toContain('Extra detail');
+    expect(html).toContain('<dl>');
+    expect(html).toContain('<dt>Term</dt>');
+    expect(html).toContain('<dd>Meaning</dd>');
+  });
+
+  it('renders safe HTML and strips script', () => {
+    const html = renderPreviewHtml('line<br>break\n\n<script>alert(1)</script>\n<details><summary>x</summary>y</details>\n');
+    expect(html).toContain('<br');
+    expect(html).not.toContain('<script');
+    expect(html).toContain('<details>');
+    expect(html).toContain('<summary>x</summary>');
+  });
 });

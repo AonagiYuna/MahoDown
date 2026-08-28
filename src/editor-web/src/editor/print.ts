@@ -83,6 +83,11 @@ function buildPrintDocument(title: string, bodyHtml: string, dark: boolean): str
   .md-mermaid { margin: 12px 0; overflow: auto; page-break-inside: avoid; }
   .md-mermaid-src { display: none; }
   .md-mermaid svg { max-width: 100%; height: auto; }
+  dl { margin: 0.7em 0; }
+  dt { font-weight: 650; }
+  dd { margin: 0.15em 0 0.6em 1.4em; color: ${muted}; }
+  .footnotes { margin-top: 1.2em; font-size: 9.5pt; color: ${muted}; }
+  .fn-ref { font-size: 0.75em; }
   table {
     border-collapse: collapse;
     width: 100%;

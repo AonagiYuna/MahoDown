@@ -110,19 +110,185 @@ function resolveImageSrc(url: string): string {
   return `${DOC_ASSET_ORIGIN}/${clean}`;
 }
 
-function inline(text: string): string {
-  const escaped = escapeHtml(text);
+type FootnoteCtx = {
+  defs: Map<string, string>;
+  order: string[];
+};
+
+let footnoteCtx: FootnoteCtx | null = null;
+
+function fnSlug(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+const INLINE_HTML = new Set([
+  'br',
+  'kbd',
+  'mark',
+  'sub',
+  'sup',
+  'span',
+  'u',
+  'small',
+  'abbr',
+  'cite',
+  'dfn',
+  'time',
+  'wbr',
+  'img',
+  'video',
+  'audio',
+  'source'
+]);
+
+function sanitizeAttrValue(name: string, value: string): string | null {
+  const n = name.toLowerCase();
+  const v = value.trim();
+  if (n.startsWith('on') || n === 'srcdoc') {
+    return null;
+  }
+  if (/^(javascript|vbscript):/i.test(v)) {
+    return null;
+  }
+  if (/^data:/i.test(v) && !/^data:image\//i.test(v)) {
+    return null;
+  }
+  return value;
+}
+
+function sanitizeInlineHtml(tag: string): string {
+  const parsed = /^<\/?([a-zA-Z][a-zA-Z0-9-]*)([^>]*)\/?>$/.exec(tag.trim());
+  if (!parsed) {
+    return escapeHtml(tag);
+  }
+  const name = (parsed[1] ?? '').toLowerCase();
+  if (!INLINE_HTML.has(name)) {
+    return escapeHtml(tag);
+  }
+  const closing = tag.trim().startsWith('</');
+  if (closing) {
+    return `</${name}>`;
+  }
+  const attrSrc = parsed[2] ?? '';
+  const attrs: string[] = [];
+  const re = /([a-zA-Z_:][\w:.-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(attrSrc))) {
+    const key = m[1] ?? '';
+    const raw = m[2] ?? m[3] ?? m[4] ?? '';
+    const safe = sanitizeAttrValue(key, raw);
+    if (safe === null) {
+      continue;
+    }
+    if (m[2] !== undefined || m[3] !== undefined || m[4] !== undefined) {
+      attrs.push(`${key}="${escapeHtml(safe)}"`);
+    } else {
+      attrs.push(key);
+    }
+  }
+  const voidish = name === 'br' || name === 'img' || name === 'wbr' || name === 'source';
+  const attrStr = attrs.length ? ` ${attrs.join(' ')}` : '';
+  return voidish ? `<${name}${attrStr} />` : `<${name}${attrStr}>`;
+}
+
+function decorateMarkdown(escaped: string): string {
   return escaped
     .replace(/!\[([^\]]*)]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_m, alt, url) => {
       return `<img src="${resolveImageSrc(url)}" alt="${alt}" />`;
     })
     .replace(/\[([^\]]+)]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/\[\^([^\]]+)\]/g, (_m, id: string) => {
+      const ctx = footnoteCtx;
+      if (!ctx || !ctx.defs.has(id)) {
+        return _m;
+      }
+      if (!ctx.order.includes(id)) {
+        ctx.order.push(id);
+      }
+      const n = ctx.order.indexOf(id) + 1;
+      const slug = fnSlug(id);
+      return `<sup class="fn-ref"><a href="#fn-${slug}" id="fnref-${slug}-${n}">${n}</a></sup>`;
+    })
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/__([^_]+)__/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/_([^_]+)_/g, '<em>$1</em>')
     .replace(/~~([^~]+)~~/g, '<del>$1</del>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+function inline(text: string): string {
+  const chunks = text.split(/(<\/?[a-zA-Z][a-zA-Z0-9-]*[^>]*>)/);
+  return chunks
+    .map((chunk, idx) => {
+      if (idx % 2 === 1) {
+        return sanitizeInlineHtml(chunk);
+      }
+      return decorateMarkdown(escapeHtml(chunk));
+    })
+    .join('');
+}
+
+const BLOCKED_HTML = /^(SCRIPT|IFRAME|OBJECT|EMBED|FORM|LINK|META|BASE|STYLE)$/;
+
+export function sanitizeHtml(raw: string): string {
+  if (typeof DOMParser === 'undefined') {
+    return escapeHtml(raw);
+  }
+  const doc = new DOMParser().parseFromString(`<body>${raw}</body>`, 'text/html');
+  const body = doc.body;
+  const walk = (el: Element) => {
+    [...el.children].forEach((child) => {
+      if (BLOCKED_HTML.test(child.tagName)) {
+        child.remove();
+        return;
+      }
+      [...child.attributes].forEach((attr) => {
+        const safe = sanitizeAttrValue(attr.name, attr.value);
+        if (safe === null) {
+          child.removeAttribute(attr.name);
+        } else if (safe !== attr.value) {
+          child.setAttribute(attr.name, safe);
+        }
+      });
+      walk(child);
+    });
+  };
+  walk(body);
+  return body.innerHTML;
+}
+
+function pullFootnotes(lines: string[]): Map<string, string> {
+  const defs = new Map<string, string>();
+  const skip = new Set<number>();
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = /^\[\^([^\]]+)\]:\s*(.*)$/.exec(lines[i] ?? '');
+    if (!m) {
+      continue;
+    }
+    skip.add(i);
+    const parts = [m[2] ?? ''];
+    let j = i + 1;
+    while (j < lines.length) {
+      const ln = lines[j] ?? '';
+      if (/^(?:\s{2,}|\t)\S/.test(ln)) {
+        parts.push(ln.trim());
+        skip.add(j);
+        j += 1;
+        continue;
+      }
+      break;
+    }
+    defs.set(m[1] ?? '', parts.join(' ').trim());
+  }
+  for (const idx of skip) {
+    lines[idx] = '';
+  }
+  return defs;
+}
+
+function isHtmlBlockStart(line: string): boolean {
+  return /^<\/?[a-zA-Z][a-zA-Z0-9-]*/.test(line.trim());
 }
 
 function isTableSeparator(line: string): boolean {
@@ -228,6 +394,8 @@ export function renderPreviewHtml(markdown: string): string {
   });
 
   const lines = withPlaceholders.split('\n');
+  const defs = pullFootnotes(lines);
+  footnoteCtx = { defs, order: [] };
   const html: string[] = [];
   let i = 0;
   let listType: 'ul' | 'ol' | null = null;
@@ -281,6 +449,62 @@ export function renderPreviewHtml(markdown: string): string {
         html.push('</tr>');
       }
       html.push('</tbody></table>');
+      continue;
+    }
+
+    if (isHtmlBlockStart(line)) {
+      flushList();
+      const buf: string[] = [];
+      while (i < lines.length) {
+        const ln = lines[i] ?? '';
+        if (buf.length > 0 && !ln.trim()) {
+          break;
+        }
+        buf.push(ln);
+        i += 1;
+      }
+      html.push(sanitizeHtml(buf.join('\n')));
+      continue;
+    }
+
+    if (
+      line.trim() &&
+      i + 1 < lines.length &&
+      /^:\s+\S/.test(lines[i + 1] ?? '') &&
+      !parseListItem(line) &&
+      !line.includes('|')
+    ) {
+      flushList();
+      html.push('<dl>');
+      while (i < lines.length) {
+        const terms: string[] = [];
+        while (
+          i < lines.length &&
+          (lines[i] ?? '').trim() &&
+          !/^:\s+/.test(lines[i] ?? '') &&
+          i + 1 < lines.length &&
+          /^:\s+\S/.test(lines[i + 1] ?? '')
+        ) {
+          terms.push((lines[i] ?? '').trim());
+          i += 1;
+        }
+        if (!terms.length) {
+          break;
+        }
+        for (const term of terms) {
+          html.push(`<dt>${inline(term)}</dt>`);
+        }
+        while (i < lines.length && /^:\s+/.test(lines[i] ?? '')) {
+          const chunks = [(lines[i] ?? '').replace(/^:\s+/, '')];
+          i += 1;
+          while (i < lines.length && /^(?:\s{2,}|\t)\S/.test(lines[i] ?? '')) {
+            chunks.push((lines[i] ?? '').trim());
+            i += 1;
+          }
+          html.push(`<dd>${inline(chunks.join(' '))}</dd>`);
+        }
+      }
+      html.push('</dl>');
       continue;
     }
 
@@ -342,5 +566,18 @@ export function renderPreviewHtml(markdown: string): string {
   }
 
   flushList();
+  const noteOrder = footnoteCtx ? [...footnoteCtx.order] : [];
+  if (noteOrder.length) {
+    html.push('<hr class="footnotes-sep" /><section class="footnotes"><ol>');
+    for (const id of noteOrder) {
+      const slug = fnSlug(id);
+      const body = footnoteCtx?.defs.get(id) ?? '';
+      html.push(
+        `<li id="fn-${slug}">${inline(body)} <a class="fn-back" href="#fnref-${slug}-1">↩</a></li>`
+      );
+    }
+    html.push('</ol></section>');
+  }
+  footnoteCtx = null;
   return html.join('\n');
 }
