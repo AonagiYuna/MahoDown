@@ -1,26 +1,16 @@
-<p align="center">
-  <img src="docs/images/hero.svg" width="640" alt="MahoDown">
-</p>
+# MahoDown
 
-<p align="center">
-  <strong>为写作准备的桌面 Markdown 编辑器。</strong><br>
-  不是再一个 VS Code，也不是网盘笔记。打开即写，写完即走。
-</p>
+![MahoDown](docs/images/icon.png)
 
-<p align="center">
-  <a href="https://github.com/AonagiYuna/MahoDown/releases/latest"><img src="https://img.shields.io/github/v/release/AonagiYuna/MahoDown?style=flat-square&color=8b7cf6&label=Release" alt="Release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-6f8fdd?style=flat-square" alt="MIT"></a>
-  <img src="https://img.shields.io/badge/Windows-x64-5b8fdd?style=flat-square" alt="Windows">
-  <img src="https://img.shields.io/badge/Shell-Tauri%202-9d8cf0?style=flat-square" alt="Tauri 2">
-</p>
+**为写作准备的桌面 Markdown 编辑器。**  
+不是再一个 VS Code，也不是网盘笔记。打开即写，写完即走。
 
-<p align="center">
-  <a href="https://github.com/AonagiYuna/MahoDown/releases/latest">下载安装包</a>
-  ·
-  <a href="https://github.com/AonagiYuna/MahoDown/issues">问题反馈</a>
-  ·
-  <a href="docs/TEST.md">测试清单</a>
-</p>
+[下载安装包](https://github.com/AonagiYuna/MahoDown/releases/latest) · [问题反馈](https://github.com/AonagiYuna/MahoDown/issues) · [测试清单](docs/TEST.md)
+
+![Release](https://img.shields.io/github/v/release/AonagiYuna/MahoDown?style=flat-square&color=8b7cf6&label=Release)
+![License](https://img.shields.io/badge/License-MIT-6f8fdd?style=flat-square)
+![Windows](https://img.shields.io/badge/Windows-x64-5b8fdd?style=flat-square)
+![Tauri](https://img.shields.io/badge/Shell-Tauri%202-9d8cf0?style=flat-square)
 
 ---
 
@@ -28,14 +18,14 @@
 
 多数 Markdown 工具要么太重（先开工程再开文件），要么只给一种写法。MahoDown 把三件事放在同一个小窗口里：
 
-| | 源码 | 分屏 | 富文本 |
-|---|---|---|---|
+| 对比 | 源码 | 分屏 | 富文本 |
+|------|------|------|--------|
 | 适合 | 精确改语法、对 diff | 一边写一边看排版 | 像 Word 一样写，存的仍是 `.md` |
 | 引擎 | CodeMirror | 源码 + 预览 | Milkdown Crepe |
 
 切换模式不丢内容。默认就是一份本地文件，没有账号、没有库、没有同步协议。
 
-**还强调这些：**
+还强调这些：
 
 - **专注** — `Ctrl+E` 收掉大纲和状态栏，只留纸面
 - **图** — 粘贴、拖入；可存相对路径，也可传到 GitHub / PicGo / S3 / SM.MS
@@ -47,9 +37,29 @@
 
 ## 界面
 
-浅色纸面、无边框窗口。欢迎页只做新建或打开；编辑时左侧大纲、中间稿纸，AI 需要时再从右侧滑出。
+欢迎页只做新建或打开。
 
-真实窗口截图见 [`docs/images/`](docs/images/SHOTS.md)（欢迎页、富文本、分屏、AI 侧栏）。拍好同名 PNG 后会出现在这里。
+![欢迎页](docs/images/welcome.png)
+
+富文本：大纲 + 稿纸，点标题就能跳。
+
+![富文本](docs/images/rich.png)
+
+分屏：左边源码，右边预览。
+
+![分屏](docs/images/split.png)
+
+源码模式，给要对语法的人。
+
+![源码](docs/images/source.png)
+
+AI 侧栏对着当前文档说话，改完才写入。
+
+![AI 助手](docs/images/ai.png)
+
+版本历史按天分组，可对比、可恢复。
+
+![版本历史](docs/images/history.png)
 
 ---
 
@@ -77,8 +87,8 @@
 
 ## 快捷键
 
-| | |
-|---|---|
+| 快捷键 | 作用 |
+|--------|------|
 | `Ctrl+N` / `O` / `S` | 新建 / 打开 / 保存 |
 | `Ctrl+K` | 命令面板 |
 | `Ctrl+F` / `H` | 查找 / 替换 |
