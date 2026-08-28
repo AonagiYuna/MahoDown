@@ -4,7 +4,11 @@
 //! Publish updates by creating a GitHub Release with tag `vX.Y.Z` and attaching
 //! `MahoDown_*_x64-setup.exe` (NSIS) or the MSI.
 
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use serde_json::{json, Value};
+use tauri::AppHandle;
 
 /// GitHub repository in `owner/repo` form.
 /// Change this when you create the public repo (e.g. `"alice/mahodown"`).
@@ -63,9 +67,9 @@ struct LatestRelease {
     html_url: String,
 }
 
-fn http_client(current: &str) -> Result<reqwest::blocking::Client, String> {
+fn http_client(current: &str, timeout_secs: u64) -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .redirect(reqwest::redirect::Policy::limited(8))
         .user_agent(format!(
             "MahoDown/{current} (+https://github.com/{GITHUB_REPO})"
@@ -241,7 +245,7 @@ pub fn check_update() -> Result<Value, String> {
         }));
     }
 
-    let client = match http_client(current) {
+    let client = match http_client(current, 15) {
         Ok(c) => c,
         Err(e) => {
             return Ok(json!({
@@ -302,6 +306,91 @@ pub fn check_update() -> Result<Value, String> {
     }))
 }
 
+fn download_url_allowed(url: &str) -> bool {
+    let u = url.to_ascii_lowercase();
+    u.starts_with("https://")
+        && (u.contains("github.com/") || u.contains("githubusercontent.com/"))
+}
+
+fn download_installer(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    version: &str,
+) -> Result<PathBuf, String> {
+    if !download_url_allowed(url) {
+        return Err("下载地址不合法".into());
+    }
+    let resp = client
+        .get(url)
+        .send()
+        .map_err(|e| format!("下载失败：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("下载失败 HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().map_err(|e| format!("读取安装包失败：{e}"))?;
+    if bytes.len() < 80_000 {
+        return Err("安装包过小，可能下载不完整".into());
+    }
+    if bytes.len() < 2 || bytes[0] != b'M' || bytes[1] != b'Z' {
+        return Err("下载的不是 Windows 安装程序".into());
+    }
+    let path = std::env::temp_dir().join(format!("MahoDown_{version}_x64-setup.exe"));
+    fs::write(&path, &bytes).map_err(|e| format!("无法保存安装包：{e}"))?;
+    Ok(path)
+}
+
+fn launch_installer(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new(path)
+            .spawn()
+            .map_err(|e| format!("无法启动安装程序：{e}"))?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Err("当前平台请从 Releases 手动安装".into())
+    }
+}
+
+/// Re-fetch latest, compare versions, download installer, launch it, then quit.
+pub fn apply_update(app: &AppHandle) -> Result<Value, String> {
+    let current = env!("CARGO_PKG_VERSION");
+    if !repo_configured() {
+        return Err("尚未配置 GitHub 仓库".into());
+    }
+    let client = http_client(current, 180)?;
+    let info = fetch_latest_atom(&client).or_else(|_| fetch_latest_api(&client))?;
+    let tag = info.tag.trim();
+    let latest = version_of_tag(tag);
+    if !version_lt(current, latest) {
+        return Ok(json!({
+            "ok": false,
+            "skipped": true,
+            "currentVersion": current,
+            "latestVersion": latest,
+            "message": format!("当前已是最新版本 v{current}（最新 v{latest}）"),
+        }));
+    }
+
+    let url = setup_download_url(tag, latest);
+    let path = download_installer(&client, &url, latest)?;
+    launch_installer(&path)?;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        app.exit(0);
+    });
+    Ok(json!({
+        "ok": true,
+        "installing": true,
+        "currentVersion": current,
+        "latestVersion": latest,
+        "message": format!("正在安装 v{latest}，应用即将退出"),
+    }))
+}
+
 pub fn open_external(url: &str) -> Result<(), String> {
     let url = url.trim();
     if url.is_empty() {
@@ -357,6 +446,10 @@ mod tests {
         assert!(!version_lt("0.2.0", "0.1.9"));
         assert!(!version_lt("1.0.0", "1.0.0"));
         assert!(version_lt("1.0.0", "1.0.1-beta"));
+        assert!(version_lt("0.1.9", "0.1.10"));
+        assert!(!version_lt("0.1.10", "0.1.9"));
+        assert!(!version_lt("0.1.10", "0.1.10"));
+        assert!(version_lt("v0.1.8", "0.1.9"));
     }
 
     #[test]

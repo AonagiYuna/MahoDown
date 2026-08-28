@@ -2033,7 +2033,7 @@ function renderSettings(): string {
       <div class="field-row"><label>更新</label><div>
         <button type="button" class="btn-secondary" data-action="check-update" style="height:28px;padding:0 10px;font-size:12px">检查更新</button>
       </div></div>
-      <p class="desc" style="margin-top:10px">开源后通过 GitHub Releases 推送版本；菜单「检查更新」会查询 latest release。</p>`;
+      <p class="desc" style="margin-top:10px">菜单「检查更新」会对比当前版本与 GitHub Releases；有新版本可在软件内下载安装。</p>`;
   }
 
   return `
@@ -2698,27 +2698,54 @@ async function openExternalUrl(url: string): Promise<void> {
   }
 }
 
+async function applyInAppUpdate(): Promise<void> {
+  const info = state.updateDialog;
+  if (!info?.updateAvailable) {
+    showToast('当前已是最新版本');
+    return;
+  }
+  showToast('正在下载更新，请稍候…', 120_000);
+  try {
+    const result = await sendBridgeRequest<{
+      ok?: boolean;
+      skipped?: boolean;
+      installing?: boolean;
+      message?: string;
+      currentVersion?: string;
+      latestVersion?: string;
+    }>('app:applyUpdate', {});
+    if (result.skipped) {
+      showToast(result.message || '已是最新版本');
+      return;
+    }
+    showToast(result.message || '安装程序已启动，应用即将退出', 8_000);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '更新失败');
+  }
+}
+
 function renderUpdateDialog(): string {
   const info = state.updateDialog;
   if (!info) {
     return '';
   }
   const title = info.updateAvailable ? '发现新版本' : info.configured === false ? '更新未配置' : '检查更新';
-  const verLine =
-    info.latestVersion && info.currentVersion
-      ? `<div class="update-ver">当前 <strong>v${escapeHtml(info.currentVersion)}</strong>${
-          info.updateAvailable
-            ? ` → 最新 <strong>v${escapeHtml(info.latestVersion)}</strong>`
-            : ''
-        }</div>`
-      : `<div class="update-ver">当前 <strong>v${escapeHtml(info.currentVersion || __APP_VERSION__)}</strong></div>`;
+  const current = info.currentVersion || __APP_VERSION__;
+  const latest = info.latestVersion || '';
+  const cmp =
+    latest && info.updateAvailable
+      ? '可更新'
+      : latest
+        ? '已是最新'
+        : '';
+  const verLine = `<div class="update-ver">当前 <strong>v${escapeHtml(current)}</strong>${
+    latest ? `　→　最新 <strong>v${escapeHtml(latest)}</strong>` : ''
+  }${cmp ? `　·　${cmp}` : ''}</div>`;
   const notes = (info.notes || '').trim();
   const notesHtml = notes
     ? `<pre class="update-notes">${escapeHtml(notes.slice(0, 1200))}${notes.length > 1200 ? '…' : ''}</pre>`
     : '';
-  const primaryUrl = info.downloadUrl || info.htmlUrl || info.releasesUrl || '';
-  const primaryLabel = info.downloadUrl ? '下载安装包' : info.updateAvailable ? '查看 Release' : '打开 Releases';
-  const secondaryUrl = info.repoUrl || '';
+  const browserUrl = info.downloadUrl || info.htmlUrl || info.releasesUrl || '';
 
   return `
   <div class="update-overlay" data-update-overlay>
@@ -2733,13 +2760,13 @@ function renderUpdateDialog(): string {
       ${notesHtml}
       <div class="update-actions">
         ${
-          primaryUrl
-            ? `<button type="button" class="btn-primary" data-update-open="${escapeHtml(primaryUrl)}">${primaryLabel}</button>`
+          info.updateAvailable
+            ? `<button type="button" class="btn-primary" data-update-apply>立即更新</button>`
             : ''
         }
         ${
-          secondaryUrl && secondaryUrl !== primaryUrl
-            ? `<button type="button" class="btn-secondary" data-update-open="${escapeHtml(secondaryUrl)}">GitHub 仓库</button>`
+          browserUrl
+            ? `<button type="button" class="${info.updateAvailable ? 'btn-secondary' : 'btn-primary'}" data-update-open="${escapeHtml(browserUrl)}">${info.updateAvailable ? '浏览器下载' : '打开 Releases'}</button>`
             : ''
         }
         <button type="button" class="btn-secondary" data-update-close>关闭</button>
@@ -3353,6 +3380,11 @@ function bindEvents(): void {
       if (url) {
         void openExternalUrl(url);
       }
+    });
+  });
+  app.querySelectorAll<HTMLElement>('[data-update-apply]').forEach((el) => {
+    el.addEventListener('click', () => {
+      void applyInAppUpdate();
     });
   });
 }

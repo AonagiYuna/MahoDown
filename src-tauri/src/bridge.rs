@@ -136,6 +136,7 @@ fn dispatch_sync(
         }
         "ai:presets" => Ok(json!({ "presets": ai::presets() })),
         "app:checkUpdate" => update::check_update(),
+        "app:applyUpdate" => update::apply_update(app),
         "app:openExternal" => {
             let url = payload
                 .get("url")
