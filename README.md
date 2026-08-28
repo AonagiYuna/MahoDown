@@ -1,16 +1,28 @@
-# MahoDown
+<p align="center">
+  <img src="docs/images/icon.png" width="96" height="96" alt="MahoDown">
+</p>
 
-![MahoDown](docs/images/icon.png)
+<h1 align="center">MahoDown</h1>
 
-**为写作准备的桌面 Markdown 编辑器。**  
-不是再一个 VS Code，也不是网盘笔记。打开即写，写完即走。
+<p align="center">
+  <strong>为写作准备的桌面 Markdown 编辑器。</strong><br>
+  不是再一个 VS Code，也不是网盘笔记。打开即写，写完即走。
+</p>
 
-[下载安装包](https://github.com/AonagiYuna/MahoDown/releases/latest) · [问题反馈](https://github.com/AonagiYuna/MahoDown/issues) · [测试清单](docs/TEST.md)
+<p align="center">
+  <a href="https://github.com/AonagiYuna/MahoDown/releases/latest">下载安装包</a>
+  ·
+  <a href="https://github.com/AonagiYuna/MahoDown/issues">问题反馈</a>
+  ·
+  <a href="docs/TEST.md">测试清单</a>
+</p>
 
-![Release](https://img.shields.io/github/v/release/AonagiYuna/MahoDown?style=flat-square&color=8b7cf6&label=Release)
-![License](https://img.shields.io/badge/License-MIT-6f8fdd?style=flat-square)
-![Windows](https://img.shields.io/badge/Windows-x64-5b8fdd?style=flat-square)
-![Tauri](https://img.shields.io/badge/Shell-Tauri%202-9d8cf0?style=flat-square)
+<p align="center">
+  <img src="https://img.shields.io/github/v/release/AonagiYuna/MahoDown?style=flat-square&color=8b7cf6&label=Release" alt="Release">
+  <img src="https://img.shields.io/badge/License-MIT-6f8fdd?style=flat-square" alt="MIT">
+  <img src="https://img.shields.io/badge/Windows-x64-5b8fdd?style=flat-square" alt="Windows">
+  <img src="https://img.shields.io/badge/Shell-Tauri%202-9d8cf0?style=flat-square" alt="Tauri 2">
+</p>
 
 ---
 
@@ -39,27 +51,27 @@
 
 欢迎页只做新建或打开。
 
-![欢迎页](docs/images/welcome.png)
+<p align="center"><img src="docs/images/welcome.png" width="720" alt="欢迎页"></p>
 
 富文本：大纲 + 稿纸，点标题就能跳。
 
-![富文本](docs/images/rich.png)
+<p align="center"><img src="docs/images/rich.png" width="720" alt="富文本"></p>
 
 分屏：左边源码，右边预览。
 
-![分屏](docs/images/split.png)
+<p align="center"><img src="docs/images/split.png" width="720" alt="分屏"></p>
 
 源码模式，给要对语法的人。
 
-![源码](docs/images/source.png)
+<p align="center"><img src="docs/images/source.png" width="720" alt="源码"></p>
 
 AI 侧栏对着当前文档说话，改完才写入。
 
-![AI 助手](docs/images/ai.png)
+<p align="center"><img src="docs/images/ai.png" width="720" alt="AI 助手"></p>
 
 版本历史按天分组，可对比、可恢复。
 
-![版本历史](docs/images/history.png)
+<p align="center"><img src="docs/images/history.png" width="720" alt="版本历史"></p>
 
 ---
 
