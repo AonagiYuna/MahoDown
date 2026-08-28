@@ -13,7 +13,14 @@ import {
   toStorageMarkdown
 } from './editor/markdown';
 import { clearAssetCache, collapseAssetUrls, expandImagesForDisplay } from './editor/assets';
-import { findInMarkdown, groupSnapshotsByDay, simpleLineDiff } from './editor/search';
+import {
+  findInMarkdown,
+  groupSnapshotsByDay,
+  replaceAllInMarkdown,
+  replaceHitInMarkdown,
+  simpleLineDiff,
+  type SearchHit
+} from './editor/search';
 import { appendImageMarkdown, firstImageFile, uploadImageFile } from './imageUpload';
 
 type EditorMode = 'src' | 'split' | 'rich';
@@ -80,6 +87,10 @@ type AppState = {
   cursorCol: number;
   searchOpen: boolean;
   searchQuery: string;
+  searchReplace: boolean;
+  replaceQuery: string;
+  searchIndex: number;
+  searchCase: boolean;
   historyDiffId?: string;
   historyDiffText?: string;
   aiBaseUrl: string;
@@ -172,6 +183,10 @@ const state: AppState = {
   cursorCol: 1,
   searchOpen: false,
   searchQuery: '',
+  searchReplace: false,
+  replaceQuery: '',
+  searchIndex: 0,
+  searchCase: false,
   aiBaseUrl: 'https://api.deepseek.com/v1',
   aiModel: 'deepseek-chat',
   aiApiKey: '',
@@ -1294,36 +1309,66 @@ async function uploadAllLocalImages(): Promise<void> {
   }
 }
 
-function jumpToOutlineLine(line: number): void {
-  const items = extractOutline(getCurrentMarkdown());
-  const item = items.find((entry) => entry.line === line);
-  if (!item) {
+function collectEditorHeadings(): HTMLElement[] {
+  const root =
+    state.mode === 'rich'
+      ? document.querySelector('.milkdown-host .ProseMirror')
+      : document.querySelector('[data-preview]');
+  if (!root) {
+    return [];
+  }
+  return Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')).filter(
+    (el) => !el.closest('pre, .cm-editor, .milkdown-slash-menu')
+  );
+}
+
+function scrollHeadingIntoEditor(heading: HTMLElement): void {
+  const pane = heading.closest('.rich-pane, .preview-pane') as HTMLElement | null;
+  if (!pane) {
+    heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
+  const paneRect = pane.getBoundingClientRect();
+  const headRect = heading.getBoundingClientRect();
+  const nextTop = pane.scrollTop + (headRect.top - paneRect.top) - 20;
+  pane.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
+}
 
+function jumpToOutlineLine(line: number, index?: number): void {
   if ((state.mode === 'src' || state.mode === 'split') && source) {
     source.jumpToLine(line);
   }
 
-  if (state.mode === 'split' || state.mode === 'rich') {
-    // Scope to .ProseMirror (the editable content) — NOT .milkdown-host, whose
-    // block/slash menus also contain <h*> nodes (Text/List/Advanced) that would
-    // offset the index.
-    const root =
-      state.mode === 'rich'
-        ? document.querySelector('.milkdown-host .ProseMirror')
-        : document.querySelector('[data-preview]');
-    // Match by document ORDER, not text: heading text in the DOM is rendered
-    // (no markdown markup) while item.text is raw, so text matching failed for
-    // any heading with **bold** / `code` / links, or duplicate titles. The Nth
-    // outline entry is the Nth rendered heading (both cover h1–h6 in order).
-    const headings = root?.querySelectorAll('h1, h2, h3, h4, h5, h6');
-    const heading = headings?.[items.indexOf(item)];
-    heading?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const reveal = (idx?: number) => {
+    if (state.mode !== 'split' && state.mode !== 'rich') {
+      return false;
+    }
+    const headings = collectEditorHeadings();
+    let heading: HTMLElement | undefined;
+    if (typeof idx === 'number' && idx >= 0) {
+      heading = headings[idx];
+    }
+    if (!heading) {
+      const items = extractOutline(state.markdown);
+      const found = items.findIndex((entry) => entry.line === line);
+      heading = headings[found];
+    }
+    if (!heading) {
+      return false;
+    }
+    scrollHeadingIntoEditor(heading);
+    return true;
+  };
+
+  if (!reveal(index) && state.mode === 'rich') {
+    requestAnimationFrame(() => reveal(index));
   }
 
   document.querySelectorAll('.outline-item').forEach((el) => {
-    el.classList.toggle('active', Number((el as HTMLElement).dataset.outlineLine) === line);
+    const btn = el as HTMLElement;
+    const matchIndex = typeof index === 'number' && Number(btn.dataset.outlineIndex) === index;
+    const matchLine = Number(btn.dataset.outlineLine) === line;
+    btn.classList.toggle('active', matchIndex || matchLine);
   });
 }
 
@@ -1568,22 +1613,10 @@ function renderStatusAndOutline(): void {
       ? items
           .map(
             (item, index) =>
-              `<button class="outline-item ${index === 0 ? 'active' : ''} depth-${item.level}" type="button" data-outline-line="${item.line}" title="H${item.level}">${escapeHtml(item.text)}</button>`
+              `<button class="outline-item ${index === 0 ? 'active' : ''} depth-${item.level}" type="button" data-outline-index="${index}" data-outline-line="${item.line}" title="H${item.level}">${escapeHtml(item.text)}</button>`
           )
           .join('')
       : '<div class="outline-empty">暂无标题</div>';
-    outline.querySelectorAll<HTMLElement>('[data-outline-line]').forEach((el) => {
-      el.addEventListener('click', () => {
-        const line = Number(el.dataset.outlineLine);
-        if (!Number.isNaN(line)) {
-          jumpToOutlineLine(line);
-        }
-      });
-      // Prevent accidental browser context / reload gestures from bubbling oddly.
-      el.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-      });
-    });
   }
 
   const preview = document.querySelector('[data-preview]');
@@ -1618,6 +1651,7 @@ function paletteItems(): Array<{ id: string; label: string; kbd?: string; run: (
     {
       id: 'history',
       label: '版本历史',
+      kbd: 'Ctrl+Shift+H',
       run: () => {
         void (async () => {
           state.historyOpen = true;
@@ -1639,13 +1673,15 @@ function paletteItems(): Array<{ id: string; label: string; kbd?: string; run: (
     },
     {
       id: 'search',
-      label: '在文档中查找',
-      kbd: 'Ctrl+Shift+F',
-      run: () => {
-        state.searchOpen = true;
-        state.searchQuery = '';
-        render();
-      }
+      label: '查找',
+      kbd: 'Ctrl+F',
+      run: () => openFindBar(false)
+    },
+    {
+      id: 'replace',
+      label: '替换',
+      kbd: 'Ctrl+H',
+      run: () => openFindBar(true)
     },
     { id: 'mode-rich', label: '切换到富文本', run: () => setMode('rich') },
     { id: 'mode-split', label: '切换到分屏', run: () => setMode('split') },
@@ -1979,8 +2015,10 @@ function renderSettings(): string {
       <div class="field-row"><label>保存</label><div>Ctrl+S</div></div>
       <div class="field-row"><label>另存为</label><div>Ctrl+Shift+S</div></div>
       <div class="field-row"><label>专注模式</label><div>Ctrl+E</div></div>
-      <div class="field-row"><label>版本历史</label><div>Ctrl+H</div></div>
-      <div class="field-row"><label>查找</label><div>Ctrl+Shift+F</div></div>
+      <div class="field-row"><label>版本历史</label><div>Ctrl+Shift+H</div></div>
+      <div class="field-row"><label>查找</label><div>Ctrl+F</div></div>
+      <div class="field-row"><label>替换</label><div>Ctrl+H</div></div>
+      <div class="field-row"><label>查找下一个 / 上一个</label><div>F3 / Shift+F3</div></div>
       <div class="field-row"><label>打印</label><div>Ctrl+P</div></div>
       <div class="field-row"><label>设置</label><div>Ctrl+,</div></div>
       <div class="field-row"><label>关闭面板</label><div>Esc</div></div>`;
@@ -2079,35 +2117,261 @@ function renderHistoryOverlay(): string {
   </div>`;
 }
 
-function renderSearchOverlay(): string {
-  if (!state.searchOpen) {
-    return '';
+function currentSearchHits(): SearchHit[] {
+  return findInMarkdown(getCurrentMarkdown(), state.searchQuery, 500, state.searchCase);
+}
+
+function jumpToTextOccurrence(root: Element, query: string, occurrence: number, caseSensitive: boolean): boolean {
+  if (!query) {
+    return false;
   }
-  const hits = findInMarkdown(getCurrentMarkdown(), state.searchQuery);
-  return `
-  <div class="settings-overlay" data-search-overlay>
-    <div class="settings-card" style="height:min(420px,86vh);width:min(520px,94vw)">
-      <div class="settings-top">
-        <div style="font-size:12px;font-weight:600">在文档中查找</div>
-        <button class="icon-btn" type="button" data-action="close-search" style="margin-left:auto">✕</button>
+  const needle = caseSensitive ? query : query.toLowerCase();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let seen = 0;
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (node.parentElement?.closest('pre, .cm-editor, .milkdown-slash-menu')) {
+      continue;
+    }
+    const raw = node.textContent ?? '';
+    const hay = caseSensitive ? raw : raw.toLowerCase();
+    let from = 0;
+    while (from < hay.length) {
+      const at = hay.indexOf(needle, from);
+      if (at < 0) {
+        break;
+      }
+      if (seen === occurrence) {
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, Math.min(raw.length, at + query.length));
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        const el = node.parentElement;
+        if (el) {
+          scrollHeadingIntoEditor(el);
+        }
+        return true;
+      }
+      seen += 1;
+      from = at + Math.max(1, needle.length);
+    }
+  }
+  return false;
+}
+
+function revealSearchHit(hit: SearchHit): void {
+  if ((state.mode === 'src' || state.mode === 'split') && source) {
+    source.jumpToRange(hit.from, hit.to);
+  }
+  if (state.mode === 'rich' || state.mode === 'split') {
+    const root =
+      state.mode === 'rich'
+        ? document.querySelector('.milkdown-host .ProseMirror')
+        : document.querySelector('[data-preview]');
+    if (root) {
+      jumpToTextOccurrence(root, state.searchQuery, hit.index, state.searchCase);
+    }
+  }
+}
+
+function updateFindBarStats(bar: HTMLElement): void {
+  const hits = state.searchQuery ? currentSearchHits() : [];
+  if (hits.length) {
+    state.searchIndex = ((state.searchIndex % hits.length) + hits.length) % hits.length;
+  } else {
+    state.searchIndex = 0;
+  }
+  const count = bar.querySelector('[data-find-count]');
+  if (count) {
+    count.textContent = !state.searchQuery ? '' : hits.length ? `${state.searchIndex + 1}/${hits.length}` : '0/0';
+  }
+  bar.querySelector('[data-find-case]')?.classList.toggle('on', state.searchCase);
+  bar.classList.toggle('has-replace', state.searchReplace);
+}
+
+function bindFindBar(bar: HTMLElement): void {
+  const queryInput = bar.querySelector<HTMLInputElement>('[data-find-query]');
+  const replaceInput = bar.querySelector<HTMLInputElement>('[data-find-replace]');
+  queryInput?.addEventListener('input', () => {
+    state.searchQuery = queryInput.value;
+    state.searchIndex = 0;
+    updateFindBarStats(bar);
+    const hits = currentSearchHits();
+    if (hits[0]) {
+      revealSearchHit(hits[0]);
+      queryInput.focus();
+    }
+  });
+  replaceInput?.addEventListener('input', () => {
+    state.replaceQuery = replaceInput.value;
+  });
+  queryInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.isComposing) {
+      event.preventDefault();
+      event.stopPropagation();
+      findStep(event.shiftKey ? -1 : 1);
+    }
+  });
+  replaceInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.isComposing) {
+      event.preventDefault();
+      event.stopPropagation();
+      replaceCurrentHit();
+    }
+  });
+  bar.querySelector('[data-find-next]')?.addEventListener('click', () => findStep(1));
+  bar.querySelector('[data-find-prev]')?.addEventListener('click', () => findStep(-1));
+  bar.querySelector('[data-find-case]')?.addEventListener('click', () => {
+    state.searchCase = !state.searchCase;
+    state.searchIndex = 0;
+    updateFindBarStats(bar);
+    const hits = currentSearchHits();
+    if (hits[0]) {
+      revealSearchHit(hits[0]);
+    }
+  });
+  bar.querySelector('[data-find-close]')?.addEventListener('click', () => closeFindBar());
+  bar.querySelector('[data-find-replace-one]')?.addEventListener('click', () => replaceCurrentHit());
+  bar.querySelector('[data-find-replace-all]')?.addEventListener('click', () => replaceAllHits());
+}
+
+function ensureFindBar(): HTMLElement | null {
+  if (state.view !== 'editor') {
+    return null;
+  }
+  const host = app.querySelector('.main') ?? app;
+  let bar = app.querySelector<HTMLElement>('[data-find-bar]');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'find-bar';
+    bar.dataset.findBar = '';
+    bar.innerHTML = `
+      <div class="find-bar-row">
+        <input data-find-query type="text" placeholder="查找" spellcheck="false" />
+        <span class="find-count" data-find-count></span>
+        <button type="button" class="find-icon-btn" data-find-prev title="上一个 Shift+F3">↑</button>
+        <button type="button" class="find-icon-btn" data-find-next title="下一个 F3">↓</button>
+        <button type="button" class="find-icon-btn" data-find-case title="区分大小写">Aa</button>
+        <button type="button" class="find-icon-btn" data-find-close title="关闭 Esc">✕</button>
       </div>
-      <div style="padding:14px;display:flex;flex-direction:column;gap:10px;min-height:0;flex:1">
-        <input data-search-input class="search-input" placeholder="输入关键字…" value="${escapeHtml(state.searchQuery)}" />
-        <div style="font-size:11px;color:var(--muted)">${hits.length ? `${hits.length} 处匹配` : state.searchQuery ? '无匹配' : '输入后即时搜索'}</div>
-        <div class="search-hits">
-          ${hits
-            .map(
-              (h) =>
-                `<button type="button" class="search-hit" data-search-line="${h.line}" data-search-col="${h.col}">
-                  <span class="ln">L${h.line + 1}</span>
-                  <span class="pv">${escapeHtml(h.preview)}</span>
-                </button>`
-            )
-            .join('')}
-        </div>
-      </div>
-    </div>
-  </div>`;
+      <div class="find-bar-row find-replace-row">
+        <input data-find-replace type="text" placeholder="替换为" spellcheck="false" />
+        <button type="button" class="find-text-btn" data-find-replace-one>替换</button>
+        <button type="button" class="find-text-btn" data-find-replace-all>全部</button>
+      </div>`;
+    host.appendChild(bar);
+    bindFindBar(bar);
+  }
+  const q = bar.querySelector<HTMLInputElement>('[data-find-query]');
+  const r = bar.querySelector<HTMLInputElement>('[data-find-replace]');
+  if (q && q.value !== state.searchQuery) {
+    q.value = state.searchQuery;
+  }
+  if (r && r.value !== state.replaceQuery) {
+    r.value = state.replaceQuery;
+  }
+  updateFindBarStats(bar);
+  return bar;
+}
+
+function closeFindBar(): void {
+  state.searchOpen = false;
+  app.querySelector('[data-find-bar]')?.remove();
+}
+
+function openFindBar(replace: boolean): void {
+  if (state.view !== 'editor') {
+    return;
+  }
+  if (state.paletteOpen) {
+    state.paletteOpen = false;
+    app.querySelector('[data-palette]')?.remove();
+  }
+  state.searchOpen = true;
+  if (replace) {
+    state.searchReplace = true;
+  } else if (!app.querySelector('[data-find-bar]')) {
+    state.searchReplace = false;
+  }
+  const bar = ensureFindBar();
+  const focusReplace = replace && Boolean(state.searchQuery);
+  const input = bar?.querySelector<HTMLInputElement>(focusReplace ? '[data-find-replace]' : '[data-find-query]');
+  input?.focus();
+  input?.select();
+  const hits = currentSearchHits();
+  if (hits[state.searchIndex]) {
+    revealSearchHit(hits[state.searchIndex]!);
+    input?.focus();
+  }
+}
+
+function findStep(delta: number): void {
+  if (!state.searchOpen) {
+    openFindBar(false);
+    return;
+  }
+  const hits = currentSearchHits();
+  if (!hits.length) {
+    ensureFindBar();
+    return;
+  }
+  state.searchIndex = (state.searchIndex + delta + hits.length) % hits.length;
+  const bar = ensureFindBar();
+  if (bar) {
+    updateFindBarStats(bar);
+  }
+  const hit = hits[state.searchIndex];
+  if (hit) {
+    revealSearchHit(hit);
+  }
+}
+
+function replaceCurrentHit(): void {
+  if (!state.searchQuery) {
+    return;
+  }
+  const md = getCurrentMarkdown();
+  const hits = findInMarkdown(md, state.searchQuery, 500, state.searchCase);
+  const hit = hits[state.searchIndex] ?? hits[0];
+  if (!hit) {
+    showToast('无匹配');
+    return;
+  }
+  const next = replaceHitInMarkdown(md, hit, state.replaceQuery);
+  setMarkdown(next, { dirty: true });
+  renderStatusAndOutline();
+  const remaining = findInMarkdown(next, state.searchQuery, 500, state.searchCase);
+  state.searchIndex = Math.min(hit.index, Math.max(0, remaining.length - 1));
+  const bar = ensureFindBar();
+  if (bar) {
+    updateFindBarStats(bar);
+  }
+  const follow = remaining[state.searchIndex];
+  if (follow) {
+    window.setTimeout(() => revealSearchHit(follow), 40);
+  }
+}
+
+function replaceAllHits(): void {
+  if (!state.searchQuery) {
+    return;
+  }
+  const md = getCurrentMarkdown();
+  const { next, count } = replaceAllInMarkdown(md, state.searchQuery, state.replaceQuery, state.searchCase);
+  if (!count) {
+    showToast('无匹配');
+    return;
+  }
+  setMarkdown(next, { dirty: true });
+  renderStatusAndOutline();
+  state.searchIndex = 0;
+  const bar = ensureFindBar();
+  if (bar) {
+    updateFindBarStats(bar);
+  }
+  showToast(`已替换 ${count} 处`);
 }
 
 function renderPalette(): string {
@@ -2142,7 +2406,7 @@ function renderEditor(): string {
   const outline = extractOutline(state.markdown)
     .map(
       (item, index) =>
-        `<button class="outline-item ${index === 0 ? 'active' : ''} depth-${item.level}" type="button" data-outline-line="${item.line}">${escapeHtml(item.text)}</button>`
+        `<button class="outline-item ${index === 0 ? 'active' : ''} depth-${item.level}" type="button" data-outline-index="${index}" data-outline-line="${item.line}">${escapeHtml(item.text)}</button>`
     )
     .join('');
 
@@ -2213,7 +2477,6 @@ function renderEditor(): string {
       ${renderSettings()}
       ${renderPalette()}
       ${renderHistoryOverlay()}
-      ${renderSearchOverlay()}
       ${renderUpdateDialog()}
       <div class="toast" data-toast ${state.toast ? '' : 'hidden'}>${escapeHtml(state.toast)}</div>
     </div>
@@ -2325,9 +2588,11 @@ function runMenuCommand(cmd: string | undefined): void {
     return;
   }
   if (cmd === 'search') {
-    state.searchOpen = true;
-    state.searchQuery = '';
-    render();
+    openFindBar(false);
+    return;
+  }
+  if (cmd === 'replace') {
+    openFindBar(true);
     return;
   }
   if (cmd === 'ai-polish') {
@@ -2513,7 +2778,8 @@ function renderAppMenu(): string {
 
     <div class="menu-section-label menu-section-divider">工具</div>
     <button type="button" class="menu-item" data-menu="upload-all">上传全部本地图片到图床</button>
-    <button type="button" class="menu-item" data-menu="search">查找…<span class="kbd">Ctrl+Shift+F</span></button>
+    <button type="button" class="menu-item" data-menu="search">查找…<span class="kbd">Ctrl+F</span></button>
+    <button type="button" class="menu-item" data-menu="replace">替换…<span class="kbd">Ctrl+H</span></button>
     <div class="menu-item menu-parent" tabindex="0" role="menuitem" aria-haspopup="true">
       <span>✦ AI 处理</span><span class="chev">›</span>
       <div class="menu-sub" role="menu" aria-label="AI 处理">
@@ -2523,7 +2789,7 @@ function renderAppMenu(): string {
         <button type="button" class="menu-item" data-menu="ai-translate">翻译选中</button>
       </div>
     </div>
-    <button type="button" class="menu-item" data-menu="history">版本历史<span class="kbd">Ctrl+H</span></button>
+    <button type="button" class="menu-item" data-menu="history">版本历史<span class="kbd">Ctrl+Shift+H</span></button>
     <button type="button" class="menu-item" data-menu="plugins">插件…</button>
     <button type="button" class="menu-item" data-menu="settings">设置…<span class="kbd">Ctrl+,</span></button>
 
@@ -2733,8 +2999,7 @@ function bindEvents(): void {
         render();
       }
       if (action === 'close-search') {
-        state.searchOpen = false;
-        render();
+        closeFindBar();
       }
       if (action === 'print-doc') {
         void printDocument();
@@ -2941,28 +3206,7 @@ function bindEvents(): void {
     });
   });
 
-  const searchInput = app.querySelector<HTMLInputElement>('[data-search-input]');
-  searchInput?.addEventListener('input', () => {
-    state.searchQuery = searchInput.value;
-    render();
-    app.querySelector<HTMLInputElement>('[data-search-input]')?.focus();
-  });
-  app.querySelectorAll<HTMLElement>('[data-search-line]').forEach((el) => {
-    el.addEventListener('click', () => {
-      const line = Number(el.dataset.searchLine);
-      state.searchOpen = false;
-      render();
-      if (!Number.isNaN(line)) {
-        jumpToOutlineLine(line);
-      }
-    });
-  });
-  app.querySelector('[data-search-overlay]')?.addEventListener('click', (event) => {
-    if (event.target === event.currentTarget) {
-      state.searchOpen = false;
-      render();
-    }
-  });
+
 
   // Split pane sync scroll
   const sourcePane = app.querySelector<HTMLElement>('.source-pane .cm-scroller, .source-pane textarea');
@@ -3014,13 +3258,17 @@ function bindEvents(): void {
     bindMenuEvents();
   }
 
-  app.querySelectorAll<HTMLElement>('[data-outline-line]').forEach((el) => {
-    el.addEventListener('click', () => {
-      const line = Number(el.dataset.outlineLine);
-      if (!Number.isNaN(line)) {
-        jumpToOutlineLine(line);
-      }
-    });
+  app.querySelector('.outline')?.addEventListener('click', (event) => {
+    const btn = (event.target as HTMLElement).closest<HTMLElement>('[data-outline-line]');
+    if (!btn) {
+      return;
+    }
+    event.preventDefault();
+    const line = Number(btn.dataset.outlineLine);
+    const index = Number(btn.dataset.outlineIndex);
+    if (!Number.isNaN(line)) {
+      jumpToOutlineLine(line, Number.isNaN(index) ? undefined : index);
+    }
   });
 
   app.querySelectorAll<HTMLElement>('[data-win]').forEach((el) => {
@@ -3058,7 +3306,9 @@ function bindEvents(): void {
       const item = paletteItems().find((x) => x.id === id);
       state.paletteOpen = false;
       item?.run();
-      render();
+      if (id !== 'search' && id !== 'replace') {
+        render();
+      }
     });
   });
 
@@ -3105,27 +3355,57 @@ function render(): void {
   bindRichEditor();
   bindSourceEditor();
   bindAiPanel();
+  if (state.searchOpen) {
+    ensureFindBar();
+  }
   void applyWindowLayoutForView(state.view);
 }
 
 function onKeyDown(event: KeyboardEvent): void {
   const mod = event.ctrlKey || event.metaKey;
-  if (mod && event.key.toLowerCase() === 'k') {
+  const key = event.key.toLowerCase();
+  if (event.key === 'F3') {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.view !== 'editor') {
+      return;
+    }
+    findStep(event.shiftKey ? -1 : 1);
+    return;
+  }
+  if (mod && key === 'k') {
     event.preventDefault();
     state.paletteOpen = !state.paletteOpen;
     state.paletteQuery = '';
-    state.searchOpen = false;
+    closeFindBar();
     render();
     app.querySelector<HTMLInputElement>('[data-palette-input]')?.focus();
     return;
   }
-  if (mod && event.shiftKey && event.key.toLowerCase() === 'f') {
+  if (mod && event.shiftKey && key === 'f') {
     event.preventDefault();
-    if (state.view !== 'editor') return;
-    state.searchOpen = true;
-    state.paletteOpen = false;
-    render();
-    app.querySelector<HTMLInputElement>('[data-search-input]')?.focus();
+    event.stopPropagation();
+    openFindBar(false);
+    return;
+  }
+  if (mod && event.shiftKey && key === 'h') {
+    event.preventDefault();
+    event.stopPropagation();
+    state.menuOpen = false;
+    state.historyOpen = true;
+    void loadHistory().then(() => render());
+    return;
+  }
+  if (mod && !event.shiftKey && key === 'f') {
+    event.preventDefault();
+    event.stopPropagation();
+    openFindBar(false);
+    return;
+  }
+  if (mod && !event.shiftKey && key === 'h') {
+    event.preventDefault();
+    event.stopPropagation();
+    openFindBar(true);
     return;
   }
   if (mod && event.key.toLowerCase() === 'p') {
@@ -3160,13 +3440,6 @@ function onKeyDown(event: KeyboardEvent): void {
     render();
     return;
   }
-  if (mod && event.key.toLowerCase() === 'h') {
-    event.preventDefault();
-    state.menuOpen = false;
-    state.historyOpen = true;
-    void loadHistory().then(() => render());
-    return;
-  }
   if (mod && event.key === ',') {
     event.preventDefault();
     state.menuOpen = false;
@@ -3181,8 +3454,7 @@ function onKeyDown(event: KeyboardEvent): void {
       state.paletteOpen = false;
       render();
     } else if (state.searchOpen) {
-      state.searchOpen = false;
-      render();
+      closeFindBar();
     } else if (state.historyOpen) {
       state.historyOpen = false;
       render();
@@ -3229,7 +3501,7 @@ window.mahodown = {
   }
 };
 
-window.addEventListener('keydown', onKeyDown);
+window.addEventListener('keydown', onKeyDown, true);
 
 document.addEventListener('dragover', (event) => {
   // Allow HTML5 DnD (Milkdown block reorder + image files).

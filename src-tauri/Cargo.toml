@@ -1,6 +1,6 @@
 [package]
 name = "mahodown"
-version = "0.1.6"
+version = "0.1.7"
 description = "MahoDown - cross-platform Markdown editor"
 authors = ["MahoDown"]
 edition = "2021"

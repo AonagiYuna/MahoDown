@@ -1,7 +1,6 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-import { searchKeymap } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import {
   EditorView,
@@ -18,6 +17,7 @@ export type SourceEditor = {
   setMarkdown: (markdown: string) => void;
   focus: () => void;
   jumpToLine: (line: number) => void;
+  jumpToRange: (from: number, to: number) => void;
   getSelection: () => string;
   replaceSelection: (text: string) => void;
   destroy: () => void;
@@ -117,7 +117,7 @@ export function mountSourceEditor(
         syntaxHighlighting(dark ? darkHighlight : lightHighlight),
         themeExtension(dark),
         placeholder('开始书写 Markdown…'),
-        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.updateListener.of((update) => {
           if (suppress || !update.docChanged) {
             return;
@@ -150,6 +150,16 @@ export function mountSourceEditor(
       view.dispatch({
         selection: { anchor: lineInfo.from, head: lineInfo.to },
         effects: EditorView.scrollIntoView(lineInfo.from, { y: 'start', yMargin: 48 })
+      });
+      view.focus();
+    },
+    jumpToRange: (from: number, to: number) => {
+      const doc = view.state.doc;
+      const f = Math.max(0, Math.min(from, doc.length));
+      const t = Math.max(f, Math.min(to, doc.length));
+      view.dispatch({
+        selection: { anchor: f, head: t },
+        effects: EditorView.scrollIntoView(f, { y: 'center', yMargin: 60 })
       });
       view.focus();
     },

@@ -642,6 +642,7 @@
   line-height: 1.4;
   border-left: 2px solid transparent;
   box-sizing: border-box;
+  cursor: pointer;
 }
 
 .outline-item:hover {
@@ -919,6 +920,21 @@
   line-height: var(--editor-line-height, 1.9) !important;
   color: var(--text-body) !important;
   caret-color: #8c7ee8;
+}
+
+.milkdown-host .ProseMirror h1,
+.milkdown-host .ProseMirror h2,
+.milkdown-host .ProseMirror h3,
+.milkdown-host .ProseMirror h4,
+.milkdown-host .ProseMirror h5,
+.milkdown-host .ProseMirror h6,
+.preview-pane .prose h1,
+.preview-pane .prose h2,
+.preview-pane .prose h3,
+.preview-pane .prose h4,
+.preview-pane .prose h5,
+.preview-pane .prose h6 {
+  scroll-margin-top: 16px;
 }
 
 .milkdown-host .ProseMirror h1 {
@@ -1660,6 +1676,87 @@
   border: 1px solid var(--border);
   border-radius: 99px;
   padding: 1px 6px;
+}
+
+.find-bar {
+  position: absolute;
+  top: 10px;
+  right: 16px;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 300px;
+  max-width: min(420px, calc(100% - 28px));
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.14);
+  box-sizing: border-box;
+}
+.find-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.find-replace-row {
+  display: none;
+}
+.find-bar.has-replace .find-replace-row {
+  display: flex;
+}
+.find-bar input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12.5px;
+  box-sizing: border-box;
+}
+.find-bar input:focus {
+  outline: none;
+  border-color: var(--acc-b);
+}
+.find-count {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  flex: none;
+  min-width: 40px;
+  text-align: right;
+}
+.find-icon-btn,
+.find-text-btn {
+  flex: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text2);
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+.find-icon-btn {
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+}
+.find-text-btn {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.find-icon-btn:hover,
+.find-text-btn:hover {
+  background: var(--seg);
+  border-color: var(--border);
+}
+.find-icon-btn.on {
+  color: var(--acc-text);
+  background: rgba(157, 140, 240, 0.12);
+  border-color: var(--border);
 }
 
 /* Search / history extras */

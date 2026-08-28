@@ -3,38 +3,97 @@ export type SearchHit = {
   col: number;
   preview: string;
   index: number;
+  from: number;
+  to: number;
 };
 
-/** Case-insensitive line hits for current document search. */
-export function findInMarkdown(markdown: string, query: string, limit = 200): SearchHit[] {
-  const q = query.trim();
+function lineColAt(markdown: string, at: number): { line: number; col: number } {
+  const before = markdown.slice(0, at);
+  const line = (before.match(/\n/g) ?? []).length;
+  const lastNl = before.lastIndexOf('\n');
+  return { line, col: lastNl < 0 ? at : at - lastNl - 1 };
+}
+
+function previewAt(markdown: string, at: number, queryLen: number): string {
+  const lastNl = markdown.lastIndexOf('\n', Math.max(0, at - 1));
+  const lineStart = at === 0 ? 0 : lastNl + 1;
+  const lineEnd = markdown.indexOf('\n', at);
+  const lineText = markdown.slice(lineStart, lineEnd < 0 ? markdown.length : lineEnd);
+  const col = at - lineStart;
+  const start = Math.max(0, col - 24);
+  const end = Math.min(lineText.length, col + queryLen + 36);
+  return (start > 0 ? '…' : '') + lineText.slice(start, end) + (end < lineText.length ? '…' : '');
+}
+
+/** Document-wide substring hits. Offsets are into the given markdown string. */
+export function findInMarkdown(
+  markdown: string,
+  query: string,
+  limit = 200,
+  caseSensitive = false
+): SearchHit[] {
+  const q = query;
   if (!q) {
     return [];
   }
-  const lower = q.toLowerCase();
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const source = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const hay = caseSensitive ? source : source.toLowerCase();
+  const needle = caseSensitive ? q : q.toLowerCase();
   const hits: SearchHit[] = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i] ?? '';
-    const hay = line.toLowerCase();
-    let from = 0;
-    while (from < hay.length) {
-      const at = hay.indexOf(lower, from);
-      if (at < 0) {
-        break;
-      }
-      const start = Math.max(0, at - 24);
-      const end = Math.min(line.length, at + q.length + 36);
-      const preview =
-        (start > 0 ? '…' : '') + line.slice(start, end) + (end < line.length ? '…' : '');
-      hits.push({ line: i, col: at, preview, index: hits.length });
-      if (hits.length >= limit) {
-        return hits;
-      }
-      from = at + Math.max(1, q.length);
+  let from = 0;
+  while (from < hay.length) {
+    const at = hay.indexOf(needle, from);
+    if (at < 0) {
+      break;
     }
+    const { line, col } = lineColAt(source, at);
+    hits.push({
+      line,
+      col,
+      preview: previewAt(source, at, q.length),
+      index: hits.length,
+      from: at,
+      to: at + q.length
+    });
+    if (hits.length >= limit) {
+      return hits;
+    }
+    from = at + Math.max(1, needle.length);
   }
   return hits;
+}
+
+export function replaceAllInMarkdown(
+  markdown: string,
+  query: string,
+  replacement: string,
+  caseSensitive = false
+): { next: string; count: number } {
+  if (!query) {
+    return { next: markdown, count: 0 };
+  }
+  const source = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const hits = findInMarkdown(source, query, 100000, caseSensitive);
+  if (!hits.length) {
+    return { next: source, count: 0 };
+  }
+  let next = source;
+  for (let i = hits.length - 1; i >= 0; i -= 1) {
+    const hit = hits[i];
+    if (!hit) {
+      continue;
+    }
+    next = next.slice(0, hit.from) + replacement + next.slice(hit.to);
+  }
+  return { next, count: hits.length };
+}
+
+export function replaceHitInMarkdown(markdown: string, hit: SearchHit, replacement: string): string {
+  const source = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (hit.from < 0 || hit.to > source.length || hit.from > hit.to) {
+    return source;
+  }
+  return source.slice(0, hit.from) + replacement + source.slice(hit.to);
 }
 
 /** Minimal line-based diff for history preview. */
@@ -46,7 +105,6 @@ export function simpleLineDiff(
   const b = after.replace(/\r\n/g, '\n').split('\n');
   const out: Array<{ type: 'same' | 'add' | 'del'; text: string }> = [];
   const max = Math.max(a.length, b.length);
-  // LCS is heavy; use simple walk for short docs
   let i = 0;
   let j = 0;
   while (i < a.length && j < b.length) {

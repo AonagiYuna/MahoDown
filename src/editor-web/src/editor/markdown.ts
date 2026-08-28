@@ -89,9 +89,9 @@ export function extractOutline(markdown: string): Array<{ level: number; text: s
     if (inCode) {
       continue;
     }
-    const match = /^(#{1,6})\s+(.+)$/.exec(line);
+        const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
     if (match) {
-      items.push({ level: match[1].length, text: match[2].trim(), line: i });
+      items.push({ level: match[1].length, text: (match[2] ?? '').trim(), line: i });
     }
   }
   return items;

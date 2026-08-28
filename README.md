@@ -30,8 +30,12 @@
 | `Ctrl+O` | 打开 |
 | `Ctrl+S` | 保存 |
 | `Ctrl+K` | 命令面板 |
+| `Ctrl+F` | 查找 |
+| `Ctrl+H` | 替换 |
+| `F3` / `Shift+F3` | 下一个 / 上一个 |
 | `Ctrl+E` | 专注模式 |
 | `Ctrl+P` | 打印 |
+| `Ctrl+Shift+H` | 版本历史 |
 | `Ctrl+,` | 设置 |
 
 ## 从源码运行
