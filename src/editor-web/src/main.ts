@@ -12,7 +12,7 @@ import {
   renderPreviewHtml,
   toStorageMarkdown
 } from './editor/markdown';
-import { hydrateMermaid } from './editor/mermaid';
+import { bindMermaidZoom, hydrateMermaid } from './editor/mermaid';
 import { clearAssetCache, collapseAssetUrls, expandImagesForDisplay } from './editor/assets';
 import {
   findInMarkdown,
@@ -3548,6 +3548,7 @@ window.mahodown = {
   }
 };
 
+bindMermaidZoom();
 window.addEventListener('keydown', onKeyDown, true);
 
 document.addEventListener('dragover', (event) => {
