@@ -40,7 +40,18 @@ export function mountRichEditor(
         // Tab / Shift-Tab indent inside code blocks (CodeMirror ships no Tab
         // binding by default). Prec.highest so Tab indents rather than being
         // swallowed by any default binding; indentWithTab also de-indents.
-        extensions: [Prec.highest(keymap.of([indentWithTab]))]
+        extensions: [Prec.highest(keymap.of([indentWithTab]))],
+        renderPreview: (language, content, applyPreview) => {
+          if (language.toLowerCase() !== 'mermaid') {
+            return null;
+          }
+          const dark = document.documentElement.dataset.theme === 'dark';
+          void import('./mermaid')
+            .then(({ renderMermaidSvg }) => renderMermaidSvg(content, dark))
+            .then((svg) => applyPreview(svg))
+            .catch(() => applyPreview(null));
+          return '图表渲染中…';
+        }
       }
     }
   });

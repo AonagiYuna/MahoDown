@@ -67,4 +67,18 @@ describe('renderPreviewHtml GFM', () => {
     expect(html).toContain('checked');
     expect(html).toContain('<hr />');
   });
+
+  it('nests lists and keeps mermaid fences as diagram mounts', () => {
+    const html = renderPreviewHtml('- a\n  - b\n\n```mermaid\nflowchart LR\n  x-->y\n```\n');
+    expect(html).toContain('<ul><li>a<ul><li>b</li></ul></li></ul>');
+    expect(html).toContain('class="md-mermaid"');
+    expect(html).toContain('flowchart LR');
+  });
+
+  it('renders blockquotes that use > without a following space', () => {
+    const html = renderPreviewHtml('>hello\n>\n> world\n');
+    expect(html).toContain('<blockquote>');
+    expect(html).toContain('hello');
+    expect(html).toContain('world');
+  });
 });

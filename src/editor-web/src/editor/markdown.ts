@@ -89,7 +89,7 @@ export function extractOutline(markdown: string): Array<{ level: number; text: s
     if (inCode) {
       continue;
     }
-        const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
     if (match) {
       items.push({ level: match[1].length, text: (match[2] ?? '').trim(), line: i });
     }
@@ -129,6 +129,70 @@ function isTableSeparator(line: string): boolean {
   return /^\s*\|?[\s:|-]+\|[\s:|-]+\|?\s*$/.test(line) && /\|/.test(line) && /-/.test(line);
 }
 
+type ListItem = {
+  indent: number;
+  ordered: boolean;
+  task: boolean;
+  checked: boolean;
+  text: string;
+};
+
+function parseListItem(line: string): ListItem | null {
+  if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+    return null;
+  }
+  const m = /^(\s*)([-*+]|\d+\.)\s+(?:\[([ xX])\]\s+)?(.*)$/.exec(line);
+  if (!m) {
+    return null;
+  }
+  return {
+    indent: (m[1] ?? '').length,
+    ordered: /^\d+\./.test(m[2] ?? ''),
+    task: m[3] !== undefined,
+    checked: (m[3] ?? '').toLowerCase() === 'x',
+    text: m[4] ?? ''
+  };
+}
+
+function consumeList(
+  lines: string[],
+  cursor: { i: number },
+  startIndent: number,
+  ordered: boolean
+): string {
+  const tag = ordered ? 'ol' : 'ul';
+  const out: string[] = [`<${tag}>`];
+  while (cursor.i < lines.length) {
+    const item = parseListItem(lines[cursor.i] ?? '');
+    if (!item || item.indent < startIndent) {
+      break;
+    }
+    if (item.indent > startIndent) {
+      out.push(consumeList(lines, cursor, item.indent, item.ordered));
+      continue;
+    }
+    if (item.ordered !== ordered) {
+      break;
+    }
+    cursor.i += 1;
+    let nested = '';
+    const next = parseListItem(lines[cursor.i] ?? '');
+    if (next && next.indent > startIndent) {
+      nested = consumeList(lines, cursor, next.indent, next.ordered);
+    }
+    if (item.task) {
+      const checked = item.checked ? ' checked' : '';
+      out.push(
+        `<li class="task"><input type="checkbox" disabled${checked} /> ${inline(item.text)}${nested}</li>`
+      );
+    } else {
+      out.push(`<li>${inline(item.text)}${nested}</li>`);
+    }
+  }
+  out.push(`</${tag}>`);
+  return out.join('');
+}
+
 function splitTableRow(line: string): string[] {
   let row = line.trim();
   if (row.startsWith('|')) {
@@ -147,7 +211,15 @@ export function renderPreviewHtml(markdown: string): string {
   const codeBlocks: string[] = [];
   const withPlaceholders = source.replace(/```([^\n`]*)\n([\s\S]*?)```/g, (_m, lang, code) => {
     const idx = codeBlocks.length;
-    const label = languageLabel(String(lang ?? ''));
+    const rawLang = String(lang ?? '').trim();
+    if (rawLang.toLowerCase() === 'mermaid') {
+      const body = String(code ?? '').replace(/\n$/, '');
+      codeBlocks.push(
+        `<div class="md-mermaid"><pre class="md-mermaid-src">${escapeHtml(body)}</pre></div>`
+      );
+      return `\u0000CODE${idx}\u0000`;
+    }
+    const label = languageLabel(rawLang);
     const colored = highlightCode(String(code ?? ''), label);
     codeBlocks.push(
       `<pre class="code-block" data-lang="${escapeHtml(label)}"><div class="code-lang">${escapeHtml(label)}</div><code class="hljs">${colored}</code></pre>`
@@ -164,14 +236,6 @@ export function renderPreviewHtml(markdown: string): string {
     if (listType) {
       html.push(listType === 'ul' ? '</ul>' : '</ol>');
       listType = null;
-    }
-  };
-
-  const openList = (type: 'ul' | 'ol') => {
-    if (listType !== type) {
-      flushList();
-      html.push(type === 'ul' ? '<ul>' : '<ol>');
-      listType = type;
     }
   };
 
@@ -236,39 +300,33 @@ export function renderPreviewHtml(markdown: string): string {
       continue;
     }
 
-    if (line.startsWith('> ')) {
+    if (/^>\s?/.test(line) || line === '>') {
       flushList();
       const quote: string[] = [];
-      while (i < lines.length && (lines[i] ?? '').startsWith('> ')) {
-        quote.push((lines[i] ?? '').slice(2));
+      while (i < lines.length) {
+        const q = lines[i] ?? '';
+        if (!(q === '>' || /^>\s?/.test(q))) {
+          break;
+        }
+        quote.push(q.replace(/^>\s?/, ''));
         i += 1;
       }
-      html.push(`<blockquote>${quote.map((q) => `<p>${inline(q)}</p>`).join('')}</blockquote>`);
+      const paras = quote
+        .join('\n')
+        .split(/\n{2,}/)
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .map((p) => `<p>${inline(p.replace(/\n/g, ' '))}</p>`);
+      html.push(`<blockquote>${paras.join('')}</blockquote>`);
       continue;
     }
 
-    const task = /^[-*]\s+\[([ xX])\]\s+(.+)$/.exec(line);
-    if (task) {
-      openList('ul');
-      const checked = task[1].toLowerCase() === 'x' ? ' checked' : '';
-      html.push(
-        `<li class="task"><input type="checkbox" disabled${checked} /> ${inline(task[2])}</li>`
-      );
-      i += 1;
-      continue;
-    }
-
-    if (/^[-*]\s+/.test(line)) {
-      openList('ul');
-      html.push(`<li>${inline(line.replace(/^[-*]\s+/, ''))}</li>`);
-      i += 1;
-      continue;
-    }
-
-    if (/^\d+\.\s+/.test(line)) {
-      openList('ol');
-      html.push(`<li>${inline(line.replace(/^\d+\.\s+/, ''))}</li>`);
-      i += 1;
+    const listHead = parseListItem(line);
+    if (listHead) {
+      flushList();
+      const cursor = { i };
+      html.push(consumeList(lines, cursor, listHead.indent, listHead.ordered));
+      i = cursor.i;
       continue;
     }
 

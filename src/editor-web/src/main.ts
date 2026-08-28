@@ -12,6 +12,7 @@ import {
   renderPreviewHtml,
   toStorageMarkdown
 } from './editor/markdown';
+import { hydrateMermaid } from './editor/mermaid';
 import { clearAssetCache, collapseAssetUrls, expandImagesForDisplay } from './editor/assets';
 import {
   findInMarkdown,
@@ -1622,6 +1623,7 @@ function renderStatusAndOutline(): void {
   const preview = document.querySelector('[data-preview]');
   if (preview) {
     preview.innerHTML = renderPreviewHtml(state.markdown);
+    void hydrateMermaid(preview, state.theme === 'dark');
   }
 }
 
@@ -3398,6 +3400,10 @@ function render(): void {
   bindAiPanel();
   if (state.searchOpen) {
     ensureFindBar();
+  }
+  const preview = app.querySelector('[data-preview]');
+  if (preview) {
+    void hydrateMermaid(preview, state.theme === 'dark');
   }
   void applyWindowLayoutForView(state.view);
 }

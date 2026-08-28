@@ -862,6 +862,38 @@
   color: var(--text2);
 }
 
+.md-mermaid {
+  margin: 12px 0;
+  padding: 12px;
+  overflow: auto;
+  background: var(--code-bg);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 8px;
+}
+
+.md-mermaid-src {
+  display: none;
+}
+
+.md-mermaid:not([data-mermaid-ready]) {
+  min-height: 48px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.md-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.md-mermaid-error .md-mermaid-src {
+  display: block;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin: 0;
+}
+
 .prose img {
   max-width: 100%;
   border-radius: 8px;

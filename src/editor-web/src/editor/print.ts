@@ -1,4 +1,5 @@
 import { renderPreviewHtml } from './markdown';
+import { hydrateMermaid } from './mermaid';
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -79,6 +80,9 @@ function buildPrintDocument(title: string, bodyHtml: string, dark: boolean): str
     border-radius: 4px;
     page-break-inside: avoid;
   }
+  .md-mermaid { margin: 12px 0; overflow: auto; page-break-inside: avoid; }
+  .md-mermaid-src { display: none; }
+  .md-mermaid svg { max-width: 100%; height: auto; }
   table {
     border-collapse: collapse;
     width: 100%;
@@ -178,6 +182,9 @@ export async function printInApp(options: {
   doc.write(html);
   doc.close();
 
+  if (doc.body) {
+    await hydrateMermaid(doc.body, options.dark ?? false);
+  }
   await waitForImages(doc);
   // Layout settle
   await new Promise((r) => window.setTimeout(r, 120));
