@@ -49,17 +49,22 @@ pub fn run() {
         .manage(state)
         .setup(move |app| {
             if let Some(win) = app.get_webview_window("main") {
-                // File-association launches should open at editor size immediately
-                // (avoids welcome→editor resize flash after JS boots).
+                // Window starts hidden (config). Size it for the actual first view
+                // *then* show — otherwise file-association opens flash the 720×520
+                // welcome frame before jumping to the editor.
                 if open_on_launch {
                     use tauri::{LogicalSize, Size};
                     let _ = win.set_size(Size::Logical(LogicalSize::new(1180.0, 760.0)));
                     let _ = win.set_min_size(Some(Size::Logical(LogicalSize::new(800.0, 520.0))));
                     let _ = win.center();
                 }
-                // Config may already be visible; show+focus is cheap and kills races.
                 let _ = win.show();
                 let _ = win.set_focus();
+                let fallback = win.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(2500));
+                    let _ = fallback.show();
+                });
             }
             Ok(())
         })

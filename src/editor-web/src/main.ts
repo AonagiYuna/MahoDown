@@ -3566,11 +3566,13 @@ scheduleAutoSnapshot();
 // Keep the HTML splash until the first real frame; don't render() yet if we can
 // jump straight into a launch document after one IPC.
 
-/** Window is visible from native config; focus is enough. */
+/** Native setup already showed the window at the right size; focus after first paint. */
 async function focusWindow(): Promise<void> {
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
-    await getCurrentWindow().setFocus();
+    const win = getCurrentWindow();
+    await win.show();
+    await win.setFocus();
   } catch {
     // browser / no window API
   }
@@ -3595,8 +3597,6 @@ function applyLaunchDocument(filePath: string, markdown: string): void {
 }
 
 void (async () => {
-  void focusWindow();
-
   try {
     const ready = await sendBridgeRequest<{
       isReady?: boolean;
@@ -3622,6 +3622,7 @@ void (async () => {
       applyLaunchDocument(ready.openPath, ready.markdown);
       applyTheme();
       render();
+      void focusWindow();
       warmEditorChunks();
       void sendBridgeRequest('app:setDirtyState', { isDirty: false }).catch(() => undefined);
       return;
@@ -3631,6 +3632,7 @@ void (async () => {
       // Path without bytes (read failed earlier) — fall back to normal open.
       applyTheme();
       render();
+      void focusWindow();
       warmEditorChunks();
       await openDocument(ready.openPath).catch(() => undefined);
       return;
@@ -3647,6 +3649,7 @@ void (async () => {
   applyTheme();
   scheduleAutoSnapshot();
   render();
+  void focusWindow();
   warmEditorChunks();
   showToast('Ctrl+K 命令 · Ctrl+E 专注 · Ctrl+S 保存 · 可粘贴/拖入图片', 3600);
 })();
