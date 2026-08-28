@@ -56,6 +56,178 @@ pub fn version_lt(current: &str, latest: &str) -> bool {
     false
 }
 
+struct LatestRelease {
+    tag: String,
+    name: String,
+    notes: String,
+    html_url: String,
+}
+
+fn http_client(current: &str) -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::limited(8))
+        .user_agent(format!(
+            "MahoDown/{current} (+https://github.com/{GITHUB_REPO})"
+        ))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+fn version_of_tag(tag: &str) -> &str {
+    tag.trim().trim_start_matches('v').trim_start_matches('V')
+}
+
+fn setup_download_url(tag: &str, version: &str) -> String {
+    let tagged = if tag.starts_with('v') || tag.starts_with('V') {
+        tag.to_string()
+    } else {
+        format!("v{tag}")
+    };
+    format!("https://github.com/{GITHUB_REPO}/releases/download/{tagged}/MahoDown_{version}_x64-setup.exe")
+}
+
+fn first_atom_entry(xml: &str) -> Option<&str> {
+    let start = xml.find("<entry>")?;
+    let rel_end = xml[start..].find("</entry>")?;
+    Some(&xml[start..start + rel_end])
+}
+
+fn tag_from_atom_entry(entry: &str) -> Option<String> {
+    const KEY: &str = "/releases/tag/";
+    if let Some(i) = entry.find(KEY) {
+        let rest = &entry[i + KEY.len()..];
+        let end = rest
+            .find(|c: char| c == '"' || c == '\'' || c == '<' || c.is_whitespace())
+            .unwrap_or(rest.len());
+        let tag = rest[..end].trim();
+        if !tag.is_empty() {
+            return Some(tag.to_string());
+        }
+    }
+    const ID: &str = "<id>";
+    let i = entry.find(ID)?;
+    let rest = &entry[i + ID.len()..];
+    let end = rest.find("</id>").unwrap_or(rest.len());
+    let id = rest[..end].trim();
+    let tag = id.rsplit('/').next().unwrap_or("").trim();
+    if tag.is_empty() {
+        None
+    } else {
+        Some(tag.to_string())
+    }
+}
+
+fn between<'a>(hay: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = hay.find(open)? + open.len();
+    let end = hay[start..].find(close)?;
+    Some(hay[start..start + end].trim())
+}
+
+fn atom_text(raw: &str) -> String {
+    let unescaped = raw
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in unescaped.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn parse_latest_from_atom(xml: &str) -> Result<LatestRelease, String> {
+    let entry = first_atom_entry(xml).ok_or_else(|| "Releases 列表为空".to_string())?;
+    let tag = tag_from_atom_entry(entry).ok_or_else(|| "无法解析版本号".to_string())?;
+    let name = between(entry, "<title>", "</title>")
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| tag.clone());
+    let notes = between(entry, "<content", "</content>")
+        .and_then(|s| s.find('>').map(|i| atom_text(&s[i + 1..])))
+        .unwrap_or_default();
+    let html_url = format!("https://github.com/{GITHUB_REPO}/releases/tag/{tag}");
+    Ok(LatestRelease {
+        tag,
+        name,
+        notes,
+        html_url,
+    })
+}
+
+fn fetch_latest_atom(client: &reqwest::blocking::Client) -> Result<LatestRelease, String> {
+    let url = format!("https://github.com/{GITHUB_REPO}/releases.atom");
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8")
+        .send()
+        .map_err(|e| format!("网络错误：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub Releases {} ", resp.status()));
+    }
+    let xml = resp.text().map_err(|e| format!("读取 Release 失败：{e}"))?;
+    parse_latest_from_atom(&xml)
+}
+
+fn fetch_latest_api(client: &reqwest::blocking::Client) -> Result<LatestRelease, String> {
+    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|e| format!("网络错误：{e}"))?;
+    let status = resp.status();
+    if status.as_u16() == 404 {
+        return Err("还没有 Release".into());
+    }
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet: String = body.chars().take(120).collect();
+        return Err(format!("GitHub API {status}: {snippet}"));
+    }
+    let body: Value = resp.json().map_err(|e| format!("解析 Release 失败：{e}"))?;
+    let tag = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if tag.is_empty() {
+        return Err("latest release 没有 tag_name".into());
+    }
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&tag)
+        .to_string();
+    let notes = body
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let html_url = body
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("https://github.com/{GITHUB_REPO}/releases/tag/{tag}"));
+    Ok(LatestRelease {
+        tag,
+        name,
+        notes,
+        html_url,
+    })
+}
+
 pub fn check_update() -> Result<Value, String> {
     let current = env!("CARGO_PKG_VERSION");
     if !repo_configured() {
@@ -69,95 +241,46 @@ pub fn check_update() -> Result<Value, String> {
         }));
     }
 
-    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(12))
-        .user_agent(format!("MahoDown/{current} (+https://github.com/{GITHUB_REPO})"))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = match http_client(current) {
+        Ok(c) => c,
+        Err(e) => {
+            return Ok(json!({
+                "ok": false,
+                "configured": true,
+                "currentVersion": current,
+                "message": format!("无法发起网络请求：{e}"),
+                "htmlUrl": releases_url(),
+                "repoUrl": repo_web_url(),
+                "releasesUrl": releases_url(),
+                "downloadUrl": null,
+            }));
+        }
+    };
 
-    let resp = client
-        .get(&url)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .map_err(|e| format!("网络错误：{e}"))?;
+    // Atom feed first: api.github.com is frequently 403 without a token.
+    let latest = fetch_latest_atom(&client).or_else(|_| fetch_latest_api(&client));
+    let info = match latest {
+        Ok(info) => info,
+        Err(e) => {
+            return Ok(json!({
+                "ok": false,
+                "configured": true,
+                "currentVersion": current,
+                "updateAvailable": false,
+                "message": format!("检查失败：{e}。可手动打开 Releases 页面。"),
+                "htmlUrl": releases_url(),
+                "repoUrl": repo_web_url(),
+                "releasesUrl": releases_url(),
+                "downloadUrl": null,
+            }));
+        }
+    };
 
-    let status = resp.status();
-    if status.as_u16() == 404 {
-        return Ok(json!({
-            "ok": true,
-            "configured": true,
-            "currentVersion": current,
-            "updateAvailable": false,
-            "latestVersion": current,
-            "message": format!("仓库已连接，但还没有 Release。当前 v{current}"),
-            "htmlUrl": releases_url(),
-            "repoUrl": repo_web_url(),
-            "releasesUrl": releases_url(),
-            "notes": "",
-            "downloadUrl": null,
-        }));
-    }
-    if !status.is_success() {
-        let body = resp.text().unwrap_or_default();
-        let snippet: String = body.chars().take(180).collect();
-        return Err(format!("GitHub API {status}: {snippet}"));
-    }
-
-    let body: Value = resp.json().map_err(|e| format!("解析 Release 失败：{e}"))?;
-    let tag = body
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim();
-    if tag.is_empty() {
-        return Err("latest release 没有 tag_name".into());
-    }
-    let latest = tag.trim_start_matches('v').trim_start_matches('V');
-    let html_url = body
-        .get("html_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let notes = body
-        .get("body")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let name = body
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(tag)
-        .to_string();
-
-    // Prefer Windows installer assets when present.
-    let download_url = body
-        .get("assets")
-        .and_then(|a| a.as_array())
-        .and_then(|assets| {
-            let pick = |pred: &dyn Fn(&str) -> bool| {
-                assets.iter().find_map(|a| {
-                    let n = a.get("name").and_then(|x| x.as_str()).unwrap_or("");
-                    let u = a
-                        .get("browser_download_url")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("");
-                    if pred(n) && !u.is_empty() {
-                        Some(u.to_string())
-                    } else {
-                        None
-                    }
-                })
-            };
-            pick(&|n| n.to_ascii_lowercase().contains("setup") && n.ends_with(".exe"))
-                .or_else(|| pick(&|n| n.ends_with(".msi")))
-                .or_else(|| pick(&|n| n.ends_with(".exe")))
-        });
-
-    let update_available = version_lt(current, latest);
+    let tag = info.tag.trim();
+    let ver = version_of_tag(tag);
+    let update_available = version_lt(current, ver);
     let message = if update_available {
-        format!("发现新版本 v{latest}（当前 v{current}）")
+        format!("发现新版本 v{ver}（当前 v{current}）")
     } else {
         format!("已是最新版本 v{current}")
     };
@@ -166,13 +289,13 @@ pub fn check_update() -> Result<Value, String> {
         "ok": true,
         "configured": true,
         "currentVersion": current,
-        "latestVersion": latest,
+        "latestVersion": ver,
         "updateAvailable": update_available,
         "tagName": tag,
-        "releaseName": name,
-        "htmlUrl": if html_url.is_empty() { releases_url() } else { html_url },
-        "downloadUrl": download_url,
-        "notes": notes,
+        "releaseName": info.name,
+        "htmlUrl": info.html_url,
+        "downloadUrl": setup_download_url(tag, ver),
+        "notes": info.notes,
         "message": message,
         "repoUrl": repo_web_url(),
         "releasesUrl": releases_url(),
@@ -225,7 +348,7 @@ pub fn open_external(url: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::version_lt;
+    use super::{parse_latest_from_atom, version_lt};
 
     #[test]
     fn compares_versions() {
@@ -234,5 +357,22 @@ mod tests {
         assert!(!version_lt("0.2.0", "0.1.9"));
         assert!(!version_lt("1.0.0", "1.0.0"));
         assert!(version_lt("1.0.0", "1.0.1-beta"));
+    }
+
+    #[test]
+    fn parses_atom_latest_tag() {
+        let xml = r#"<?xml version="1.0"?>
+<feed>
+  <entry>
+    <id>tag:github.com,2008:Repository/1/v0.1.8</id>
+    <link rel="alternate" href="https://github.com/AonagiYuna/MahoDown/releases/tag/v0.1.8"/>
+    <title>MahoDown 0.1.8</title>
+    <content type="html">&lt;p&gt;fix window flash&lt;/p&gt;</content>
+  </entry>
+</feed>"#;
+        let latest = parse_latest_from_atom(xml).expect("parse");
+        assert_eq!(latest.tag, "v0.1.8");
+        assert_eq!(latest.name, "MahoDown 0.1.8");
+        assert!(latest.notes.contains("fix window flash"));
     }
 }

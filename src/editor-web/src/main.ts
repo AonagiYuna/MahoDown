@@ -2666,15 +2666,24 @@ function runMenuCommand(cmd: string | undefined): void {
 }
 
 async function checkForUpdates(): Promise<void> {
-  showToast('正在检查更新…', 10_000);
+  showToast('正在检查更新…', 12_000);
   try {
     const result = await sendBridgeRequest<UpdateCheckResult>('app:checkUpdate', {});
     state.updateDialog = result;
-    state.toast = '';
-    render();
   } catch (error) {
-    showToast(error instanceof Error ? error.message : '检查更新失败');
+    state.updateDialog = {
+      ok: false,
+      configured: true,
+      currentVersion: __APP_VERSION__,
+      message: error instanceof Error ? error.message : '检查更新失败',
+      htmlUrl: 'https://github.com/AonagiYuna/MahoDown/releases',
+      releasesUrl: 'https://github.com/AonagiYuna/MahoDown/releases',
+      repoUrl: 'https://github.com/AonagiYuna/MahoDown'
+    };
   }
+  state.toast = '';
+  state.settingsOpen = false;
+  render();
 }
 
 async function openExternalUrl(url: string): Promise<void> {
